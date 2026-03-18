@@ -1,0 +1,19 @@
+[project]
+name = "farewalk"
+version = "0.1.0"
+description = "Directional rideshare pickup optimization tool"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "pydantic-settings",
+    "python-dotenv",
+    "httpx",
+    "osmnx",
+    "networkx",
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
