@@ -12,6 +12,8 @@ dependencies = [
     "httpx",
     "osmnx",
     "networkx",
+    "pyproj",
+    "shapely",
     "pytest",
 ]
 
