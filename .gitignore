@@ -6,3 +6,5 @@ __pycache__/
 .DS_Store
 
 prompt.txt
+CLAUDE.md
+TODO.md

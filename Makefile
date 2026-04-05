@@ -3,7 +3,7 @@
 install:
 	pip install -e .
 
-test_unit: install
+test_unit:
 	pytest tests/ -v --ignore=tests/integration
 
 test_integration: install

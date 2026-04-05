@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     default_arc_steps: int = 24
     default_road_point_spacing_m: float = 35.0
 
+    default_search_budget: int = 15
+    default_walk_penalty_lambda: float = 0.5
+    default_max_leaf_size: int = 6
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
