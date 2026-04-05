@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>farewalk</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    #map { width: 100%; height: 100vh; }
+
+    #panel {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      z-index: 1000;
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+      padding: 20px;
+      width: 320px;
+      font-size: 14px;
+    }
+
+    h1 { font-size: 18px; margin-bottom: 12px; }
+    .instructions { color: #666; margin-bottom: 16px; line-height: 1.5; }
+
+    .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+    .fields label { font-size: 12px; color: #888; display: block; margin-bottom: 2px; }
+    .fields input {
+      width: 100%;
+      padding: 6px 8px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    button {
+      width: 100%;
+      padding: 10px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 8px;
+    }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #93c5fd; cursor: not-allowed; }
+    .btn-clear {
+      background: #e5e7eb;
+      color: #374151;
+    }
+    .btn-clear:hover { background: #d1d5db; }
+
+    #status { color: #666; font-size: 13px; margin-bottom: 12px; text-align: center; }
+    #status.error { color: #dc2626; }
+
+    #result {
+      display: none;
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 12px;
+    }
+    #result h3 { font-size: 14px; margin-bottom: 8px; color: #166534; }
+    #result .row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+    #result .label { color: #666; }
+    #result .value { font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div id="panel">
+    <h1>farewalk</h1>
+    <p class="instructions">
+      Click the map to set <strong>origin</strong> (1st click) and
+      <strong>destination</strong> (2nd click), or type coordinates below.
+    </p>
+
+    <div class="fields">
+      <div>
+        <label>Origin lat</label>
+        <input type="number" id="origin_lat" step="any" placeholder="40.7128">
+      </div>
+      <div>
+        <label>Origin lng</label>
+        <input type="number" id="origin_lng" step="any" placeholder="-74.0060">
+      </div>
+      <div>
+        <label>Dest lat</label>
+        <input type="number" id="dest_lat" step="any" placeholder="40.7580">
+      </div>
+      <div>
+        <label>Dest lng</label>
+        <input type="number" id="dest_lng" step="any" placeholder="-73.9855">
+      </div>
+    </div>
+
+    <button id="searchBtn" onclick="runSearch()">Search</button>
+    <button class="btn-clear" onclick="clearAll()">Clear</button>
+
+    <div id="status"></div>
+
+    <div id="result">
+      <h3>Best pickup point</h3>
+      <div class="row"><span class="label">Price</span><span class="value" id="r-price"></span></div>
+      <div class="row"><span class="label">Walk distance</span><span class="value" id="r-walk"></span></div>
+      <div class="row"><span class="label">Score</span><span class="value" id="r-score"></span></div>
+      <div class="row"><span class="label">Pickup</span><span class="value" id="r-pickup"></span></div>
+    </div>
+  </div>
+
+  <script>
+    const map = L.map("map").setView([40.7128, -74.006], 14);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+      maxZoom: 19,
+    }).addTo(map);
+
+    let originMarker = null;
+    let destMarker = null;
+    let pickupMarker = null;
+    let walkLine = null;
+    let clickState = "origin"; // "origin" | "destination"
+
+    const originIcon = L.divIcon({ className: "", html: '<div style="background:#2563eb;width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>' });
+    const destIcon = L.divIcon({ className: "", html: '<div style="background:#dc2626;width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>' });
+    const pickupIcon = L.divIcon({ className: "", html: '<div style="background:#16a34a;width:16px;height:16px;border-radius:50%;border:3px solid white;box-shadow:0 1px 6px rgba(0,0,0,0.4)"></div>' });
+
+    map.on("click", function (e) {
+      const { lat, lng } = e.latlng;
+      if (clickState === "origin") {
+        document.getElementById("origin_lat").value = lat.toFixed(6);
+        document.getElementById("origin_lng").value = lng.toFixed(6);
+        if (originMarker) map.removeLayer(originMarker);
+        originMarker = L.marker([lat, lng], { icon: originIcon }).addTo(map).bindPopup("Origin");
+        clickState = "destination";
+        setStatus("Now click to set destination");
+      } else {
+        document.getElementById("dest_lat").value = lat.toFixed(6);
+        document.getElementById("dest_lng").value = lng.toFixed(6);
+        if (destMarker) map.removeLayer(destMarker);
+        destMarker = L.marker([lat, lng], { icon: destIcon }).addTo(map).bindPopup("Destination");
+        clickState = "origin";
+        setStatus("Ready to search");
+      }
+    });
+
+    function setStatus(msg, isError) {
+      const el = document.getElementById("status");
+      el.textContent = msg;
+      el.className = isError ? "error" : "";
+    }
+
+    function clearAll() {
+      [originMarker, destMarker, pickupMarker, walkLine].forEach(layer => {
+        if (layer) map.removeLayer(layer);
+      });
+      originMarker = destMarker = pickupMarker = walkLine = null;
+      clickState = "origin";
+      document.getElementById("origin_lat").value = "";
+      document.getElementById("origin_lng").value = "";
+      document.getElementById("dest_lat").value = "";
+      document.getElementById("dest_lng").value = "";
+      document.getElementById("result").style.display = "none";
+      setStatus("");
+    }
+
+    async function runSearch() {
+      const oLat = parseFloat(document.getElementById("origin_lat").value);
+      const oLng = parseFloat(document.getElementById("origin_lng").value);
+      const dLat = parseFloat(document.getElementById("dest_lat").value);
+      const dLng = parseFloat(document.getElementById("dest_lng").value);
+
+      if ([oLat, oLng, dLat, dLng].some(isNaN)) {
+        setStatus("Set both origin and destination first", true);
+        return;
+      }
+
+      const btn = document.getElementById("searchBtn");
+      btn.disabled = true;
+      setStatus("Searching...");
+
+      // Place markers if set via text input
+      if (originMarker) map.removeLayer(originMarker);
+      originMarker = L.marker([oLat, oLng], { icon: originIcon }).addTo(map).bindPopup("Origin");
+      if (destMarker) map.removeLayer(destMarker);
+      destMarker = L.marker([dLat, dLng], { icon: destIcon }).addTo(map).bindPopup("Destination");
+
+      try {
+        const res = await fetch("/search/trip", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            origin_lat: oLat,
+            origin_lng: oLng,
+            destination_lat: dLat,
+            destination_lng: dLng,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        // Show pickup marker
+        if (pickupMarker) map.removeLayer(pickupMarker);
+        pickupMarker = L.marker([data.pickup_lat, data.pickup_lng], { icon: pickupIcon })
+          .addTo(map)
+          .bindPopup("Pickup point")
+          .openPopup();
+
+        // Draw walk line from origin to pickup
+        if (walkLine) map.removeLayer(walkLine);
+        walkLine = L.polyline(
+          [[oLat, oLng], [data.pickup_lat, data.pickup_lng]],
+          { color: "#2563eb", weight: 3, dashArray: "6 8", opacity: 0.7 }
+        ).addTo(map);
+
+        // Fit map to show all markers
+        const bounds = L.latLngBounds([
+          [oLat, oLng],
+          [dLat, dLng],
+          [data.pickup_lat, data.pickup_lng],
+        ]);
+        map.fitBounds(bounds, { padding: [60, 60] });
+
+        // Show results
+        document.getElementById("r-price").textContent = "$" + data.price.toFixed(2);
+        document.getElementById("r-walk").textContent = Math.round(data.walk_distance_m) + "m";
+        document.getElementById("r-score").textContent = data.score.toFixed(2);
+        document.getElementById("r-pickup").textContent = data.pickup_lat.toFixed(5) + ", " + data.pickup_lng.toFixed(5);
+        document.getElementById("result").style.display = "block";
+
+        setStatus("Done");
+      } catch (err) {
+        setStatus(err.message, true);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
