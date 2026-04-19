@@ -1,7 +1,12 @@
+import json
 import logging
+from queue import Queue
+from threading import Thread
 from time import perf_counter
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from shapely.geometry import mapping
 
 from farewalk.config import settings
@@ -15,10 +20,15 @@ from farewalk.services.search import search
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+_DONE = object()
 
 
 def _select_price_provider():
     return uber_price_provider if settings.uber_cookie else stub_price_provider
+
+
+def _event_line(event: dict[str, Any]) -> str:
+    return json.dumps(event, separators=(",", ":")) + "\n"
 
 
 @router.get("/health")
@@ -180,4 +190,145 @@ def trip_search(payload: TripSearchRequest) -> TripSearchResponse:
         walk_distance_m=result.walk_distance_m,
         score=result.score,
         search_area_geojson=mapping(polygon) if polygon is not None else None,
+    )
+
+
+def _trip_search_event_stream(payload: TripSearchRequest):
+    queue: Queue[dict[str, Any] | object] = Queue()
+
+    def emit(event: dict[str, Any]) -> None:
+        queue.put(event)
+
+    def worker() -> None:
+        request_start = perf_counter()
+        try:
+            origin = LatLng(lat=payload.origin_lat, lng=payload.origin_lng)
+            destination = LatLng(lat=payload.destination_lat, lng=payload.destination_lng)
+
+            emit({
+                "type": "stage",
+                "stage": "request",
+                "message": "Search request received",
+                "progress": 0.03,
+            })
+
+            stage_start = perf_counter()
+            emit({
+                "type": "stage",
+                "stage": "road_graph",
+                "message": "Fetching OpenStreetMap road graph",
+                "progress": 0.12,
+            })
+            graph, polygon = get_road_graph_for_trip_search(
+                origin=origin,
+                destination=destination,
+                radius_m=payload.radius_m,
+                half_angle_deg=payload.half_angle_deg,
+                local_circle_radius_m=payload.local_circle_radius_m,
+                arc_steps=payload.arc_steps,
+                network_type=payload.network_type,
+            )
+            emit({
+                "type": "road_graph",
+                "nodes": len(graph.nodes),
+                "edges": len(graph.edges),
+                "elapsed_s": perf_counter() - stage_start,
+                "search_area_geojson": mapping(polygon) if polygon is not None else None,
+                "progress": 0.32,
+            })
+
+            stage_start = perf_counter()
+            emit({
+                "type": "stage",
+                "stage": "candidates",
+                "message": "Generating pickup candidates",
+                "progress": 0.38,
+            })
+            candidates = generate_candidate_points(
+                graph,
+                origin,
+                spacing_m=payload.road_point_spacing_m,
+            )
+            emit({
+                "type": "candidates",
+                "count": len(candidates),
+                "elapsed_s": perf_counter() - stage_start,
+                "progress": 0.45,
+            })
+
+            get_price = _select_price_provider()
+            emit({
+                "type": "pricing_provider",
+                "provider": "uber" if settings.uber_cookie else "stub",
+                "progress": 0.48,
+            })
+
+            result = search(
+                candidates=candidates,
+                origin=origin,
+                destination=destination,
+                get_price=get_price,
+                budget=payload.budget,
+                walk_penalty=payload.walk_penalty,
+                max_leaf_size=payload.max_leaf_size,
+                on_event=emit,
+            )
+
+            if result is None:
+                emit({
+                    "type": "error",
+                    "detail": "No pickup candidates found in search area",
+                    "progress": 1.0,
+                })
+                return
+
+            stage_start = perf_counter()
+            emit({
+                "type": "stage",
+                "stage": "original_price",
+                "message": "Pricing original pickup",
+                "progress": 0.95,
+            })
+            original_price = get_price(origin, destination)
+            response = TripSearchResponse(
+                pickup_lat=result.candidate.lat,
+                pickup_lng=result.candidate.lng,
+                price=result.price,
+                original_price=original_price,
+                walk_distance_m=result.walk_distance_m,
+                score=result.score,
+                search_area_geojson=mapping(polygon) if polygon is not None else None,
+            )
+
+            emit({
+                "type": "result",
+                "result": response.model_dump(),
+                "original_price_elapsed_s": perf_counter() - stage_start,
+                "total_elapsed_s": perf_counter() - request_start,
+                "progress": 1.0,
+            })
+        except Exception as exc:
+            logger.exception("trip_search stream failed")
+            emit({
+                "type": "error",
+                "detail": str(exc),
+                "progress": 1.0,
+            })
+        finally:
+            queue.put(_DONE)
+
+    Thread(target=worker, daemon=True).start()
+
+    while True:
+        event = queue.get()
+        if event is _DONE:
+            break
+        yield _event_line(event)
+
+
+@router.post("/search/trip/stream")
+def trip_search_stream(payload: TripSearchRequest) -> StreamingResponse:
+    return StreamingResponse(
+        _trip_search_event_stream(payload),
+        media_type="application/x-ndjson",
     )

@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 import pytest
@@ -114,6 +115,26 @@ class TestTripSearchEndpoint:
         with graph_p, cands_p, pricing_p, search_p:
             response = client.post("/search/trip", json=payload)
         assert response.status_code == 200
+
+    def test_stream_returns_progress_events(self):
+        graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
+        with graph_p, cands_p, pricing_p, search_p:
+            with client.stream("POST", "/search/trip/stream", json=BASE_PAYLOAD) as response:
+                assert response.status_code == 200
+                events = [
+                    json.loads(line)
+                    for line in response.iter_lines()
+                    if line
+                ]
+
+        event_types = [event["type"] for event in events]
+        assert "stage" in event_types
+        assert "road_graph" in event_types
+        assert "candidates" in event_types
+        assert "result" in event_types
+        result_event = next(event for event in events if event["type"] == "result")
+        assert result_event["result"]["pickup_lat"] == pytest.approx(MOCK_RESULT.candidate.lat)
+        assert result_event["result"]["original_price"] == pytest.approx(MOCK_ORIGINAL_PRICE)
 
     def test_missing_required_fields_returns_422(self):
         response = client.post("/search/trip", json={"origin_lat": 40.7128})

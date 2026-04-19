@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
 from farewalk.config import settings
 from farewalk.models.geo import LatLng
@@ -24,6 +24,9 @@ class PriceProvider(Protocol):
     """
 
     def __call__(self, pickup: LatLng, destination: LatLng) -> float: ...
+
+
+SearchEventCallback = Callable[[dict[str, Any]], None]
 
 
 class _ZoneState:
@@ -146,6 +149,7 @@ def search(
     budget: int | None = None,
     walk_penalty: float | None = None,
     max_leaf_size: int | None = None,
+    on_event: SearchEventCallback | None = None,
 ) -> ScoredCandidate | None:
     """Find the best pickup point using budgeted explore/exploit search.
 
@@ -157,11 +161,14 @@ def search(
         budget: Max number of price API calls.
         walk_penalty: Lambda weight for walking distance in score.
         max_leaf_size: Max candidates per KD-tree leaf zone.
+        on_event: Optional callback for streaming/debug visualization events.
 
     Returns:
         The best ScoredCandidate found, or None if no candidates.
     """
     if not candidates:
+        if on_event:
+            on_event({"type": "search_empty", "reason": "no_candidates"})
         return None
 
     if budget is None:
@@ -172,7 +179,7 @@ def search(
         max_leaf_size = settings.default_max_leaf_size
 
     # Project everything to local meters
-    to_local, _ = get_local_transformers(origin.lat, origin.lng)
+    to_local, to_wgs84 = get_local_transformers(origin.lat, origin.lng)
     origin_x, origin_y = to_local.transform(origin.lng, origin.lat)
 
     projected = [
@@ -191,19 +198,72 @@ def search(
 
     tree = build_kdtree(projected, bounds, max_leaf_size=max_leaf_size)
     zones = get_leaf_zones(tree)
+    zone_ids = {id(z): f"z{i}" for i, z in enumerate(zones)}
+
+    def _zone_bounds_coords(zone: KDNode) -> list[list[float]]:
+        x_min, y_min, x_max, y_max = zone.bounds
+        corners = [
+            (x_min, y_min),
+            (x_max, y_min),
+            (x_max, y_max),
+            (x_min, y_max),
+            (x_min, y_min),
+        ]
+        coords = []
+        for x, y in corners:
+            lng, lat = to_wgs84.transform(x, y)
+            coords.append([lat, lng])
+        return coords
+
+    if on_event:
+        on_event({
+            "type": "zones",
+            "zones": [
+                {
+                    "id": zone_ids[id(z)],
+                    "bounds": _zone_bounds_coords(z),
+                    "point_count": len(z.points),
+                }
+                for z in zones
+                if z.points
+            ],
+            "max_leaf_size": max_leaf_size,
+            "candidate_count": len(candidates),
+        })
 
     # Skip empty zones
     zone_states = {id(z): _ZoneState(z) for z in zones if z.points}
     if not zone_states:
+        if on_event:
+            on_event({"type": "search_empty", "reason": "no_nonempty_zones"})
         return None
 
     remaining = budget
     best_overall: ScoredCandidate | None = None
 
-    def _score_and_record(state: _ZoneState, idx: int, point: ProjectedCandidate) -> None:
+    def _score_and_record(
+        state: _ZoneState,
+        idx: int,
+        point: ProjectedCandidate,
+        phase: str,
+    ) -> None:
         nonlocal remaining, best_overall
 
         pickup = LatLng(lat=point.candidate.lat, lng=point.candidate.lng)
+        calls_completed = budget - remaining
+        zone_id = zone_ids[id(state.zone)]
+
+        if on_event:
+            on_event({
+                "type": "sample_start",
+                "phase": phase,
+                "zone_id": zone_id,
+                "lat": pickup.lat,
+                "lng": pickup.lng,
+                "calls_completed": calls_completed,
+                "budget": budget,
+            })
+
         price = get_price(pickup, destination)
         walk_dist = _walking_distance_m(origin_x, origin_y, point.x, point.y)
         score = price + walk_penalty * walk_dist
@@ -223,6 +283,30 @@ def search(
             best_overall = scored
 
         remaining -= 1
+        calls_completed = budget - remaining
+
+        if on_event:
+            on_event({
+                "type": "sample",
+                "phase": phase,
+                "zone_id": zone_id,
+                "lat": pickup.lat,
+                "lng": pickup.lng,
+                "price": price,
+                "walk_distance_m": walk_dist,
+                "score": score,
+                "zone_sample_count": state.sample_count,
+                "calls_completed": calls_completed,
+                "budget": budget,
+                "remaining": remaining,
+                "best": {
+                    "lat": best_overall.candidate.lat,
+                    "lng": best_overall.candidate.lng,
+                    "price": best_overall.price,
+                    "walk_distance_m": best_overall.walk_distance_m,
+                    "score": best_overall.score,
+                } if best_overall else None,
+            })
 
     # ── Phase 1: sample one representative per zone ──
     for state in zone_states.values():
@@ -232,7 +316,7 @@ def search(
         if rep is None:
             continue
         idx = state.zone.points.index(rep)
-        _score_and_record(state, idx, rep)
+        _score_and_record(state, idx, rep, phase="representative")
 
     # ── Phase 2: iterative refinement ──
     while remaining > 0:
@@ -257,10 +341,33 @@ def search(
             break  # all points sampled
 
         state = zone_states[best_zone_id]
+        if on_event:
+            on_event({
+                "type": "zone_selected",
+                "zone_id": zone_ids[id(state.zone)],
+                "priority": best_priority,
+                "bounds": _zone_bounds_coords(state.zone),
+                "sample_count": state.sample_count,
+                "best_score": None if state.best_score == float("inf") else state.best_score,
+            })
         next_point = _pick_next_point(state, origin_x, origin_y)
         if next_point is None:
             break
         idx, point = next_point
-        _score_and_record(state, idx, point)
+        _score_and_record(state, idx, point, phase="refinement")
+
+    if on_event:
+        on_event({
+            "type": "search_done",
+            "calls_completed": budget - remaining,
+            "budget": budget,
+            "best": {
+                "lat": best_overall.candidate.lat,
+                "lng": best_overall.candidate.lng,
+                "price": best_overall.price,
+                "walk_distance_m": best_overall.walk_distance_m,
+                "score": best_overall.score,
+            } if best_overall else None,
+        })
 
     return best_overall

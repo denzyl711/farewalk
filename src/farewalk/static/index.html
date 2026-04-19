@@ -130,6 +130,21 @@
 
     .or-click { text-align: center; color: #aaa; font-size: 11px; margin-bottom: 12px; }
 
+    .progress-wrap {
+      display: none;
+      height: 8px;
+      background: #e5e7eb;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    .progress-bar {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #0891b2, #f59e0b);
+      transition: width 0.2s ease;
+    }
+
     button {
       width: 100%;
       padding: 10px;
@@ -149,9 +164,27 @@
       color: #374151;
     }
     .btn-clear:hover { background: #d1d5db; }
+    .btn-secondary {
+      background: #0f766e;
+    }
+    .btn-secondary:hover { background: #115e59; }
 
     #status { color: #666; font-size: 13px; margin-bottom: 12px; text-align: center; }
     #status.error { color: #dc2626; }
+
+    #debug {
+      display: none;
+      margin-bottom: 12px;
+      padding: 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      background: #f9fafb;
+      color: #374151;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    #debug .row { display: flex; justify-content: space-between; gap: 10px; }
+    #debug .value { font-weight: 700; }
 
     #result {
       display: none;
@@ -209,6 +242,8 @@
 
     <p class="or-click">or click the map: 1st click = origin, 2nd = destination</p>
 
+    <button class="btn-secondary" onclick="loadDefaultRoute()">Use test route</button>
+
     <details>
       <summary>Search settings</summary>
       <div class="settings-grid">
@@ -262,7 +297,19 @@
     <button id="searchBtn" onclick="runSearch()">Search</button>
     <button class="btn-clear" onclick="clearAll()">Clear</button>
 
+    <div class="progress-wrap" id="progress-wrap">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+
     <div id="status"></div>
+
+    <div id="debug">
+      <div class="row"><span>Road graph</span><span class="value" id="d-graph">-</span></div>
+      <div class="row"><span>Candidates</span><span class="value" id="d-candidates">-</span></div>
+      <div class="row"><span>Zones</span><span class="value" id="d-zones">-</span></div>
+      <div class="row"><span>Price calls</span><span class="value" id="d-calls">-</span></div>
+      <div class="row"><span>Current best</span><span class="value" id="d-best">-</span></div>
+    </div>
 
     <div id="result">
       <h3>Best pickup point</h3>
@@ -276,7 +323,10 @@
   </div>
 
   <script>
-    const map = L.map("map").setView([-37.8136, 144.9631], 13);
+    const DEFAULT_ORIGIN = { lat: -37.81000, lng: 144.96257, name: "Default pickup" };
+    const DEFAULT_DESTINATION = { lat: -37.91880, lng: 145.13942, name: "Default dropoff" };
+
+    const map = L.map("map").setView([DEFAULT_ORIGIN.lat, DEFAULT_ORIGIN.lng], 13);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: "&copy; OpenStreetMap contributors",
       maxZoom: 19,
@@ -287,6 +337,9 @@
     let pickupMarker = null;
     let walkLine = null;
     let searchAreaLayer = null;
+    let activeZoneLayer = null;
+    const zoneLayerGroup = L.layerGroup().addTo(map);
+    const sampleLayerGroup = L.layerGroup().addTo(map);
     let clickState = "origin";
 
     let originLat = null, originLng = null;
@@ -300,6 +353,39 @@
       iconSize: [20, 20],
       iconAnchor: [10, 10],
     });
+
+    function setOrigin(lat, lng, name) {
+      originLat = lat;
+      originLng = lng;
+      document.getElementById("origin_input").value = name;
+      document.getElementById("origin_coords").textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      if (originMarker) map.removeLayer(originMarker);
+      originMarker = L.marker([lat, lng], { icon: originIcon }).addTo(map).bindPopup("Origin: " + name);
+    }
+
+    function setDestination(lat, lng, name) {
+      destLat = lat;
+      destLng = lng;
+      document.getElementById("dest_input").value = name;
+      document.getElementById("dest_coords").textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      if (destMarker) map.removeLayer(destMarker);
+      destMarker = L.marker([lat, lng], { icon: destIcon }).addTo(map).bindPopup("Destination: " + name);
+    }
+
+    function fitRoute() {
+      if (originLat !== null && destLat !== null) {
+        map.fitBounds([[originLat, originLng], [destLat, destLng]], { padding: [60, 60] });
+      }
+    }
+
+    function loadDefaultRoute() {
+      clearAll(false);
+      setOrigin(DEFAULT_ORIGIN.lat, DEFAULT_ORIGIN.lng, DEFAULT_ORIGIN.name);
+      setDestination(DEFAULT_DESTINATION.lat, DEFAULT_DESTINATION.lng, DEFAULT_DESTINATION.name);
+      clickState = "origin";
+      fitRoute();
+      setStatus("Ready to search");
+    }
 
     // --- Geocoding via Nominatim ---
     let searchTimeout = null;
@@ -429,45 +515,38 @@
     }
 
     setupSearch("origin_input", "origin_suggestions", "origin_coords", (lat, lng, name) => {
-      originLat = lat; originLng = lng;
-      if (originMarker) map.removeLayer(originMarker);
-      originMarker = L.marker([lat, lng], { icon: originIcon }).addTo(map).bindPopup("Origin: " + name);
+      setOrigin(lat, lng, name);
       map.setView([lat, lng], 15);
     });
 
     setupSearch("dest_input", "dest_suggestions", "dest_coords", (lat, lng, name) => {
-      destLat = lat; destLng = lng;
-      if (destMarker) map.removeLayer(destMarker);
-      destMarker = L.marker([lat, lng], { icon: destIcon }).addTo(map).bindPopup("Destination: " + name);
-      if (originLat) {
-        map.fitBounds([[originLat, originLng], [lat, lng]], { padding: [60, 60] });
+      setDestination(lat, lng, name);
+      if (originLat !== null) {
+        fitRoute();
       } else {
         map.setView([lat, lng], 15);
       }
     });
 
+    loadDefaultRoute();
+
     // --- Map click ---
     map.on("click", function (e) {
       const { lat, lng } = e.latlng;
       if (clickState === "origin") {
-        originLat = lat; originLng = lng;
-        document.getElementById("origin_coords").textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        setOrigin(lat, lng, "Selected pickup");
         reverseGeocode(lat, lng, (name) => {
           document.getElementById("origin_input").value = name.split(",").slice(0, 2).join(",").trim();
         });
-        if (originMarker) map.removeLayer(originMarker);
-        originMarker = L.marker([lat, lng], { icon: originIcon }).addTo(map).bindPopup("Origin");
         clickState = "destination";
         setStatus("Now click to set destination");
       } else {
-        destLat = lat; destLng = lng;
-        document.getElementById("dest_coords").textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        setDestination(lat, lng, "Selected dropoff");
         reverseGeocode(lat, lng, (name) => {
           document.getElementById("dest_input").value = name.split(",").slice(0, 2).join(",").trim();
         });
-        if (destMarker) map.removeLayer(destMarker);
-        destMarker = L.marker([lat, lng], { icon: destIcon }).addTo(map).bindPopup("Destination");
         clickState = "origin";
+        fitRoute();
         setStatus("Ready to search");
       }
     });
@@ -479,19 +558,199 @@
       el.className = isError ? "error" : "";
     }
 
-    function clearAll() {
-      [originMarker, destMarker, pickupMarker, walkLine, searchAreaLayer].forEach(layer => {
+    function updateProgress(value) {
+      document.getElementById("progress-wrap").style.display = "block";
+      document.getElementById("progress-bar").style.width = Math.round(value * 100) + "%";
+    }
+
+    function resetDebug() {
+      document.getElementById("debug").style.display = "block";
+      document.getElementById("d-graph").textContent = "-";
+      document.getElementById("d-candidates").textContent = "-";
+      document.getElementById("d-zones").textContent = "-";
+      document.getElementById("d-calls").textContent = "-";
+      document.getElementById("d-best").textContent = "-";
+      updateProgress(0);
+    }
+
+    function resetVisualization() {
+      [pickupMarker, walkLine, searchAreaLayer, activeZoneLayer].forEach(layer => {
         if (layer) map.removeLayer(layer);
       });
-      originMarker = destMarker = pickupMarker = walkLine = searchAreaLayer = null;
-      originLat = originLng = destLat = destLng = null;
-      clickState = "origin";
-      document.getElementById("origin_input").value = "";
-      document.getElementById("dest_input").value = "";
-      document.getElementById("origin_coords").textContent = "";
-      document.getElementById("dest_coords").textContent = "";
+      pickupMarker = walkLine = searchAreaLayer = activeZoneLayer = null;
+      zoneLayerGroup.clearLayers();
+      sampleLayerGroup.clearLayers();
       document.getElementById("result").style.display = "none";
+    }
+
+    function clearAll(clearLocations = true) {
+      resetVisualization();
+      if (clearLocations) {
+        [originMarker, destMarker].forEach(layer => {
+          if (layer) map.removeLayer(layer);
+        });
+        originMarker = destMarker = null;
+        originLat = originLng = destLat = destLng = null;
+        clickState = "origin";
+        document.getElementById("origin_input").value = "";
+        document.getElementById("dest_input").value = "";
+        document.getElementById("origin_coords").textContent = "";
+        document.getElementById("dest_coords").textContent = "";
+      }
+      document.getElementById("progress-wrap").style.display = "none";
+      document.getElementById("progress-bar").style.width = "0%";
+      document.getElementById("debug").style.display = "none";
       setStatus("");
+    }
+
+    function drawSearchArea(geojson) {
+      if (searchAreaLayer) map.removeLayer(searchAreaLayer);
+      searchAreaLayer = null;
+      if (!geojson) return;
+
+      searchAreaLayer = L.geoJSON(geojson, {
+        style: {
+          color: "#f59e0b",
+          weight: 2,
+          opacity: 0.95,
+          fillColor: "#fbbf24",
+          fillOpacity: 0.16,
+          dashArray: "8 6",
+        },
+      }).addTo(map);
+    }
+
+    function drawZones(zones) {
+      zoneLayerGroup.clearLayers();
+      zones.forEach(zone => {
+        L.polygon(zone.bounds, {
+          color: "#0891b2",
+          weight: 1,
+          opacity: 0.4,
+          fillColor: "#67e8f9",
+          fillOpacity: 0.06,
+        }).bindTooltip(`${zone.id}: ${zone.point_count} pts`).addTo(zoneLayerGroup);
+      });
+      document.getElementById("d-zones").textContent = zones.length;
+    }
+
+    function highlightZone(bounds) {
+      if (activeZoneLayer) map.removeLayer(activeZoneLayer);
+      activeZoneLayer = L.polygon(bounds, {
+        color: "#ef4444",
+        weight: 3,
+        opacity: 0.9,
+        fillColor: "#f87171",
+        fillOpacity: 0.13,
+      }).addTo(map);
+    }
+
+    function drawSample(event) {
+      const ratio = event.budget ? event.calls_completed / event.budget : 0;
+      const color = event.phase === "representative" ? "#0f766e" : "#dc2626";
+      const radius = event.type === "sample_start" ? 5 : 7;
+
+      L.circleMarker([event.lat, event.lng], {
+        radius,
+        color,
+        weight: 2,
+        opacity: 0.95,
+        fillColor: color,
+        fillOpacity: event.type === "sample_start" ? 0.25 : 0.8,
+      }).bindTooltip(
+        event.type === "sample"
+          ? `$${event.price.toFixed(2)} | score ${event.score.toFixed(1)}`
+          : "pricing..."
+      ).addTo(sampleLayerGroup);
+
+      if (event.type === "sample") {
+        document.getElementById("d-calls").textContent = `${event.calls_completed}/${event.budget}`;
+        updateProgress(Math.min(0.9, 0.5 + ratio * 0.4));
+        if (event.best) {
+          document.getElementById("d-best").textContent = `$${event.best.price.toFixed(2)} / ${event.best.score.toFixed(1)}`;
+        }
+      }
+    }
+
+    function showResult(data) {
+      if (pickupMarker) map.removeLayer(pickupMarker);
+      pickupMarker = L.marker([data.pickup_lat, data.pickup_lng], { icon: pickupIcon })
+        .addTo(map)
+        .bindPopup("Walk here for pickup")
+        .openPopup();
+
+      if (walkLine) map.removeLayer(walkLine);
+      walkLine = L.polyline(
+        [[originLat, originLng], [data.pickup_lat, data.pickup_lng]],
+        { color: "#2563eb", weight: 3, dashArray: "6 8", opacity: 0.7 }
+      ).addTo(map);
+
+      const bounds = searchAreaLayer
+        ? searchAreaLayer.getBounds()
+        : L.latLngBounds([[originLat, originLng], [destLat, destLng]]);
+      bounds.extend([originLat, originLng]);
+      bounds.extend([destLat, destLng]);
+      bounds.extend([data.pickup_lat, data.pickup_lng]);
+      map.fitBounds(bounds, { padding: [60, 60] });
+
+      const origPrice = data.original_price;
+      const newPrice = data.price;
+      const diff = origPrice - newPrice;
+
+      document.getElementById("r-original").textContent = "$" + origPrice.toFixed(2);
+      document.getElementById("r-price").textContent = "$" + newPrice.toFixed(2);
+
+      const savingsEl = document.getElementById("r-savings");
+      if (diff > 0) {
+        savingsEl.textContent = "$" + diff.toFixed(2);
+        savingsEl.className = "value savings";
+      } else {
+        savingsEl.textContent = "-$" + Math.abs(diff).toFixed(2);
+        savingsEl.className = "value no-savings";
+      }
+
+      document.getElementById("r-walk").textContent = Math.round(data.walk_distance_m) + "m";
+      document.getElementById("r-score").textContent = data.score.toFixed(2);
+
+      const addrEl = document.getElementById("r-address");
+      addrEl.textContent = `Pickup at ${data.pickup_lat.toFixed(5)}, ${data.pickup_lng.toFixed(5)}`;
+      reverseGeocode(data.pickup_lat, data.pickup_lng, (name) => {
+        addrEl.textContent = "Walk to: " + name;
+      });
+
+      document.getElementById("result").style.display = "block";
+    }
+
+    function handleSearchEvent(event) {
+      if (event.progress !== undefined) updateProgress(event.progress);
+
+      if (event.type === "stage") {
+        setStatus(event.message);
+      } else if (event.type === "road_graph") {
+        drawSearchArea(event.search_area_geojson);
+        document.getElementById("d-graph").textContent = `${event.nodes} nodes / ${event.edges} edges`;
+        setStatus("Road graph ready");
+      } else if (event.type === "candidates") {
+        document.getElementById("d-candidates").textContent = event.count;
+        setStatus(`Generated ${event.count} candidates`);
+      } else if (event.type === "zones") {
+        drawZones(event.zones);
+        setStatus(`Split candidates into ${event.zones.length} zones`);
+      } else if (event.type === "zone_selected") {
+        highlightZone(event.bounds);
+        setStatus(`Refining ${event.zone_id}`);
+      } else if (event.type === "sample_start" || event.type === "sample") {
+        drawSample(event);
+      } else if (event.type === "pricing_provider") {
+        setStatus(`Pricing with ${event.provider}`);
+      } else if (event.type === "result") {
+        drawSearchArea(event.result.search_area_geojson);
+        showResult(event.result);
+        updateProgress(1);
+        setStatus("Done");
+      } else if (event.type === "error") {
+        setStatus(event.detail, true);
+      }
     }
 
     // --- Search ---
@@ -503,7 +762,9 @@
 
       const btn = document.getElementById("searchBtn");
       btn.disabled = true;
-      setStatus("Searching...");
+      resetVisualization();
+      resetDebug();
+      setStatus("Starting search...");
 
       if (originMarker) map.removeLayer(originMarker);
       originMarker = L.marker([originLat, originLng], { icon: originIcon }).addTo(map).bindPopup("Origin");
@@ -511,7 +772,7 @@
       destMarker = L.marker([destLat, destLng], { icon: destIcon }).addTo(map).bindPopup("Destination");
 
       try {
-        const res = await fetch("/search/trip", {
+        const res = await fetch("/search/trip/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(buildSearchPayload()),
@@ -522,75 +783,27 @@
           throw new Error(err.detail || `HTTP ${res.status}`);
         }
 
-        const data = await res.json();
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
 
-        if (searchAreaLayer) map.removeLayer(searchAreaLayer);
-        searchAreaLayer = null;
-        if (data.search_area_geojson) {
-          searchAreaLayer = L.geoJSON(data.search_area_geojson, {
-            style: {
-              color: "#f59e0b",
-              weight: 2,
-              opacity: 0.95,
-              fillColor: "#fbbf24",
-              fillOpacity: 0.18,
-              dashArray: "8 6",
-            },
-          }).addTo(map);
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop();
+
+          lines.forEach(line => {
+            if (!line.trim()) return;
+            handleSearchEvent(JSON.parse(line));
+          });
         }
 
-        // Pickup marker
-        if (pickupMarker) map.removeLayer(pickupMarker);
-        pickupMarker = L.marker([data.pickup_lat, data.pickup_lng], { icon: pickupIcon })
-          .addTo(map)
-          .bindPopup("Walk here for pickup")
-          .openPopup();
-
-        // Walk line from origin to pickup
-        if (walkLine) map.removeLayer(walkLine);
-        walkLine = L.polyline(
-          [[originLat, originLng], [data.pickup_lat, data.pickup_lng]],
-          { color: "#2563eb", weight: 3, dashArray: "6 8", opacity: 0.7 }
-        ).addTo(map);
-
-        // Fit map
-        const bounds = searchAreaLayer
-          ? searchAreaLayer.getBounds()
-          : L.latLngBounds([[originLat, originLng], [destLat, destLng]]);
-        bounds.extend([originLat, originLng]);
-        bounds.extend([destLat, destLng]);
-        bounds.extend([data.pickup_lat, data.pickup_lng]);
-        map.fitBounds(bounds, { padding: [60, 60] });
-
-        // Prices
-        const origPrice = data.original_price;
-        const newPrice = data.price;
-        const diff = origPrice - newPrice;
-
-        document.getElementById("r-original").textContent = "$" + origPrice.toFixed(2);
-        document.getElementById("r-price").textContent = "$" + newPrice.toFixed(2);
-
-        const savingsEl = document.getElementById("r-savings");
-        if (diff > 0) {
-          savingsEl.textContent = "$" + diff.toFixed(2);
-          savingsEl.className = "value savings";
-        } else {
-          savingsEl.textContent = "-$" + Math.abs(diff).toFixed(2);
-          savingsEl.className = "value no-savings";
+        if (buffer.trim()) {
+          handleSearchEvent(JSON.parse(buffer));
         }
-
-        document.getElementById("r-walk").textContent = Math.round(data.walk_distance_m) + "m";
-        document.getElementById("r-score").textContent = data.score.toFixed(2);
-
-        // Reverse geocode pickup location
-        const addrEl = document.getElementById("r-address");
-        addrEl.textContent = `Pickup at ${data.pickup_lat.toFixed(5)}, ${data.pickup_lng.toFixed(5)}`;
-        reverseGeocode(data.pickup_lat, data.pickup_lng, (name) => {
-          addrEl.textContent = "Walk to: " + name;
-        });
-
-        document.getElementById("result").style.display = "block";
-        setStatus("Done");
       } catch (err) {
         setStatus(err.message, true);
       } finally {
