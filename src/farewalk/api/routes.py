@@ -45,6 +45,7 @@ def config_defaults() -> dict[str, float | int | str | bool]:
         "local_circle_radius_m": settings.default_local_circle_radius_m,
         "arc_steps": settings.default_arc_steps,
         "road_point_spacing_m": settings.default_road_point_spacing_m,
+        "candidate_merge_radius_m": settings.default_candidate_merge_radius_m,
         "budget": settings.default_search_budget,
         "walk_penalty": settings.default_walk_penalty_lambda,
         "max_leaf_size": settings.default_max_leaf_size,
@@ -88,7 +89,8 @@ def trip_search(payload: TripSearchRequest) -> TripSearchResponse:
     logger.info(
         "trip_search received origin=(%.6f, %.6f) destination=(%.6f, %.6f) "
         "radius_m=%s half_angle_deg=%s local_circle_radius_m=%s arc_steps=%s "
-        "network_type=%s road_point_spacing_m=%s budget=%s walk_penalty=%s max_leaf_size=%s",
+        "network_type=%s road_point_spacing_m=%s candidate_merge_radius_m=%s "
+        "budget=%s walk_penalty=%s max_leaf_size=%s",
         origin.lat,
         origin.lng,
         destination.lat,
@@ -99,6 +101,7 @@ def trip_search(payload: TripSearchRequest) -> TripSearchResponse:
         payload.arc_steps,
         payload.network_type,
         payload.road_point_spacing_m,
+        payload.candidate_merge_radius_m,
         payload.budget,
         payload.walk_penalty,
         payload.max_leaf_size,
@@ -126,6 +129,7 @@ def trip_search(payload: TripSearchRequest) -> TripSearchResponse:
         graph,
         origin,
         spacing_m=payload.road_point_spacing_m,
+        merge_radius_m=payload.candidate_merge_radius_m,
     )
     logger.info(
         "trip_search candidates generated count=%s elapsed_s=%.2f",
@@ -248,10 +252,15 @@ def _trip_search_event_stream(payload: TripSearchRequest):
                 graph,
                 origin,
                 spacing_m=payload.road_point_spacing_m,
+                merge_radius_m=payload.candidate_merge_radius_m,
             )
             emit({
                 "type": "candidates",
                 "count": len(candidates),
+                "points": [
+                    {"lat": candidate.lat, "lng": candidate.lng}
+                    for candidate in candidates
+                ],
                 "elapsed_s": perf_counter() - stage_start,
                 "progress": 0.45,
             })

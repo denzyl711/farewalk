@@ -4,7 +4,7 @@ from shapely.geometry import LineString
 
 from farewalk.models.geo import LatLng
 from farewalk.models.road import CandidatePoint
-from farewalk.services.candidates import generate_candidate_points
+from farewalk.services.candidates import dedupe_candidate_points, generate_candidate_points
 
 ORIGIN = LatLng(lat=40.7128, lng=-74.0060)
 
@@ -58,7 +58,12 @@ class TestGenerateCandidatePoints:
             nodes={1: (-74.0060, 40.7128), 2: (-74.00590, 40.7128)},
             edges=[(1, 2)],
         )
-        candidates = generate_candidate_points(graph, ORIGIN, spacing_m=35.0)
+        candidates = generate_candidate_points(
+            graph,
+            ORIGIN,
+            spacing_m=35.0,
+            merge_radius_m=0,
+        )
         # Only the 2 nodes, no interpolated points
         assert len(candidates) == 2
 
@@ -124,3 +129,49 @@ class TestGenerateCandidatePoints:
         graph = nx.MultiDiGraph()
         candidates = generate_candidate_points(graph, ORIGIN, spacing_m=35.0)
         assert candidates == []
+
+
+class TestDedupeCandidatePoints:
+    def test_empty_candidates(self):
+        assert dedupe_candidate_points([], ORIGIN, merge_radius_m=15) == []
+
+    def test_zero_radius_disables_dedupe(self):
+        candidates = [
+            CandidatePoint(lat=40.7128, lng=-74.0060),
+            CandidatePoint(lat=40.7128001, lng=-74.0060001),
+        ]
+        result = dedupe_candidate_points(candidates, ORIGIN, merge_radius_m=0)
+        assert result == candidates
+
+    def test_merges_nearby_candidates(self):
+        candidates = [
+            CandidatePoint(lat=40.7128, lng=-74.0060),
+            CandidatePoint(lat=40.7128001, lng=-74.0060001),
+        ]
+        result = dedupe_candidate_points(candidates, ORIGIN, merge_radius_m=15)
+        assert result == [candidates[0]]
+
+    def test_keeps_far_candidates(self):
+        candidates = [
+            CandidatePoint(lat=40.7128, lng=-74.0060),
+            CandidatePoint(lat=40.7138, lng=-74.0060),
+        ]
+        result = dedupe_candidate_points(candidates, ORIGIN, merge_radius_m=15)
+        assert result == candidates
+
+    def test_generate_candidate_points_dedupes_clustered_nodes(self):
+        graph = _make_graph(
+            nodes={
+                1: (-74.0060000, 40.7128000),
+                2: (-74.0060001, 40.7128001),
+                3: (-74.0050000, 40.7128000),
+            },
+            edges=[],
+        )
+        candidates = generate_candidate_points(
+            graph,
+            ORIGIN,
+            spacing_m=35.0,
+            merge_radius_m=15,
+        )
+        assert len(candidates) == 2

@@ -108,6 +108,7 @@ class TestTripSearchEndpoint:
             "half_angle_deg": 45,
             "arc_steps": 16,
             "road_point_spacing_m": 25,
+            "candidate_merge_radius_m": 15,
             "max_leaf_size": 4,
             "network_type": "drive",
         }
@@ -132,6 +133,9 @@ class TestTripSearchEndpoint:
         assert "road_graph" in event_types
         assert "candidates" in event_types
         assert "result" in event_types
+        candidates_event = next(event for event in events if event["type"] == "candidates")
+        assert candidates_event["count"] == 1
+        assert candidates_event["points"] == [{"lat": 40.7135, "lng": -74.005}]
         result_event = next(event for event in events if event["type"] == "result")
         assert result_event["result"]["pickup_lat"] == pytest.approx(MOCK_RESULT.candidate.lat)
         assert result_event["result"]["original_price"] == pytest.approx(MOCK_ORIGINAL_PRICE)

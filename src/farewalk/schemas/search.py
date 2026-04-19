@@ -14,6 +14,7 @@ class TripSearchRequest(BaseModel):
     arc_steps: int | None = None
     network_type: str | None = None
     road_point_spacing_m: float | None = None
+    candidate_merge_radius_m: float | None = None
     budget: int | None = None
     walk_penalty: float | None = None
     max_leaf_size: int | None = None

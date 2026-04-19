@@ -268,6 +268,10 @@
           <input type="number" id="road_point_spacing_m" min="1" step="5" value="35">
         </div>
         <div class="setting-field">
+          <label for="candidate_merge_radius_m">Candidate merge (m)</label>
+          <input type="number" id="candidate_merge_radius_m" min="0" step="1" value="15">
+        </div>
+        <div class="setting-field">
           <label for="budget">Price-call budget</label>
           <input type="number" id="budget" min="1" step="1" value="15">
         </div>
@@ -339,6 +343,7 @@
     let searchAreaLayer = null;
     let activeZoneLayer = null;
     const zoneLayerGroup = L.layerGroup().addTo(map);
+    const candidateLayerGroup = L.layerGroup().addTo(map);
     const sampleLayerGroup = L.layerGroup().addTo(map);
     let clickState = "origin";
 
@@ -396,6 +401,7 @@
       "half_angle_deg",
       "arc_steps",
       "road_point_spacing_m",
+      "candidate_merge_radius_m",
       "budget",
       "walk_penalty",
       "max_leaf_size",
@@ -443,6 +449,7 @@
         "local_circle_radius_m",
         "half_angle_deg",
         "road_point_spacing_m",
+        "candidate_merge_radius_m",
         "walk_penalty",
       ];
       const integerFields = ["arc_steps", "budget", "max_leaf_size"];
@@ -579,6 +586,7 @@
       });
       pickupMarker = walkLine = searchAreaLayer = activeZoneLayer = null;
       zoneLayerGroup.clearLayers();
+      candidateLayerGroup.clearLayers();
       sampleLayerGroup.clearLayers();
       document.getElementById("result").style.display = "none";
     }
@@ -617,6 +625,7 @@
           fillOpacity: 0.16,
           dashArray: "8 6",
         },
+        interactive: false,
       }).addTo(map);
     }
 
@@ -629,9 +638,36 @@
           opacity: 0.4,
           fillColor: "#67e8f9",
           fillOpacity: 0.06,
-        }).bindTooltip(`${zone.id}: ${zone.point_count} pts`).addTo(zoneLayerGroup);
+          interactive: false,
+        }).addTo(zoneLayerGroup);
       });
       document.getElementById("d-zones").textContent = zones.length;
+    }
+
+    function bringLayerGroupToFront(group) {
+      group.eachLayer(layer => {
+        if (typeof layer.bringToFront === "function") {
+          layer.bringToFront();
+        }
+      });
+    }
+
+    function drawCandidatePoints(points) {
+      candidateLayerGroup.clearLayers();
+      points.forEach(point => {
+        L.circleMarker([point.lat, point.lng], {
+          radius: 4,
+          color: "#111827",
+          weight: 1.5,
+          opacity: 0.8,
+          fillColor: "#22d3ee",
+          fillOpacity: 0.75,
+        }).bindTooltip("candidate", {
+          direction: "top",
+          sticky: true,
+        }).addTo(candidateLayerGroup);
+      });
+      bringLayerGroupToFront(candidateLayerGroup);
     }
 
     function highlightZone(bounds) {
@@ -642,7 +678,9 @@
         opacity: 0.9,
         fillColor: "#f87171",
         fillOpacity: 0.13,
+        interactive: false,
       }).addTo(map);
+      bringLayerGroupToFront(sampleLayerGroup);
     }
 
     function drawSample(event) {
@@ -660,8 +698,13 @@
       }).bindTooltip(
         event.type === "sample"
           ? `$${event.price.toFixed(2)} | score ${event.score.toFixed(1)}`
-          : "pricing..."
+          : "pricing...",
+        {
+          direction: "top",
+          sticky: true,
+        }
       ).addTo(sampleLayerGroup);
+      bringLayerGroupToFront(sampleLayerGroup);
 
       if (event.type === "sample") {
         document.getElementById("d-calls").textContent = `${event.calls_completed}/${event.budget}`;
@@ -732,6 +775,7 @@
         setStatus("Road graph ready");
       } else if (event.type === "candidates") {
         document.getElementById("d-candidates").textContent = event.count;
+        drawCandidatePoints(event.points || []);
         setStatus(`Generated ${event.count} candidates`);
       } else if (event.type === "zones") {
         drawZones(event.zones);
