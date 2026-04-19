@@ -19,6 +19,11 @@ MOCK_RESULT = ScoredCandidate(
     walk_distance_m=95.0,
     score=60.0,
 )
+MOCK_ORIGINAL_PRICE = 18.75
+
+
+def mock_price_provider(pickup: LatLng, destination: LatLng) -> float:
+    return MOCK_ORIGINAL_PRICE
 
 
 class TestHealthEndpoint:
@@ -46,48 +51,67 @@ class TestTripSearchEndpoint:
             "farewalk.api.routes.generate_candidate_points",
             return_value=[CandidatePoint(lat=40.7135, lng=-74.005)],
         )
+        pricing_patch = patch(
+            "farewalk.api.routes._select_price_provider",
+            return_value=mock_price_provider,
+        )
         search_patch = patch("farewalk.api.routes.search", return_value=result)
-        return graph_patch, candidates_patch, search_patch
+        return graph_patch, candidates_patch, pricing_patch, search_patch
 
     def test_valid_request_returns_200(self):
-        graph_p, cands_p, search_p = self._mock_pipeline()
-        with graph_p, cands_p, search_p:
+        graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
+        with graph_p, cands_p, pricing_p, search_p:
             response = client.post("/search/trip", json=BASE_PAYLOAD)
         assert response.status_code == 200
 
     def test_response_shape(self):
-        graph_p, cands_p, search_p = self._mock_pipeline()
-        with graph_p, cands_p, search_p:
+        graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
+        with graph_p, cands_p, pricing_p, search_p:
             response = client.post("/search/trip", json=BASE_PAYLOAD)
         data = response.json()
         assert "pickup_lat" in data
         assert "pickup_lng" in data
         assert "price" in data
+        assert "original_price" in data
         assert "walk_distance_m" in data
         assert "score" in data
+        assert "search_area_geojson" in data
 
     def test_response_values_match_result(self):
-        graph_p, cands_p, search_p = self._mock_pipeline()
-        with graph_p, cands_p, search_p:
+        graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
+        with graph_p, cands_p, pricing_p, search_p:
             response = client.post("/search/trip", json=BASE_PAYLOAD)
         data = response.json()
         assert data["pickup_lat"] == pytest.approx(MOCK_RESULT.candidate.lat)
         assert data["pickup_lng"] == pytest.approx(MOCK_RESULT.candidate.lng)
         assert data["price"] == pytest.approx(MOCK_RESULT.price)
+        assert data["original_price"] == pytest.approx(MOCK_ORIGINAL_PRICE)
         assert data["walk_distance_m"] == pytest.approx(MOCK_RESULT.walk_distance_m)
         assert data["score"] == pytest.approx(MOCK_RESULT.score)
+        assert data["search_area_geojson"] is None
 
     def test_no_candidates_returns_404(self):
-        graph_p, cands_p, _ = self._mock_pipeline()
+        graph_p, cands_p, pricing_p, _ = self._mock_pipeline()
         search_p = patch("farewalk.api.routes.search", return_value=None)
-        with graph_p, cands_p, search_p:
+        with graph_p, cands_p, pricing_p, search_p:
             response = client.post("/search/trip", json=BASE_PAYLOAD)
         assert response.status_code == 404
 
     def test_accepts_optional_params(self):
-        payload = {**BASE_PAYLOAD, "budget": 5, "walk_penalty": 0.3, "radius_m": 400}
-        graph_p, cands_p, search_p = self._mock_pipeline()
-        with graph_p, cands_p, search_p:
+        payload = {
+            **BASE_PAYLOAD,
+            "budget": 5,
+            "walk_penalty": 0.3,
+            "radius_m": 400,
+            "local_circle_radius_m": 120,
+            "half_angle_deg": 45,
+            "arc_steps": 16,
+            "road_point_spacing_m": 25,
+            "max_leaf_size": 4,
+            "network_type": "drive",
+        }
+        graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
+        with graph_p, cands_p, pricing_p, search_p:
             response = client.post("/search/trip", json=payload)
         assert response.status_code == 200
 

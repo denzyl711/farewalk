@@ -20,22 +20,115 @@
       border-radius: 10px;
       box-shadow: 0 2px 12px rgba(0,0,0,0.15);
       padding: 20px;
-      width: 320px;
+      width: 340px;
       font-size: 14px;
     }
 
     h1 { font-size: 18px; margin-bottom: 12px; }
-    .instructions { color: #666; margin-bottom: 16px; line-height: 1.5; }
 
-    .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
-    .fields label { font-size: 12px; color: #888; display: block; margin-bottom: 2px; }
-    .fields input {
-      width: 100%;
-      padding: 6px 8px;
-      border: 1px solid #ddd;
-      border-radius: 6px;
-      font-size: 13px;
+    details {
+      margin-bottom: 12px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 10px;
     }
+    summary {
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      color: #374151;
+    }
+    .settings-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .setting-field label {
+      display: block;
+      font-size: 11px;
+      color: #6b7280;
+      margin-bottom: 3px;
+      font-weight: 600;
+    }
+    .setting-field input,
+    .setting-field select {
+      width: 100%;
+      padding: 7px 8px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 12px;
+      background: white;
+    }
+    .setting-wide {
+      grid-column: 1 / -1;
+    }
+    .pricing-mode {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #6b7280;
+    }
+
+    .location-group { margin-bottom: 12px; position: relative; }
+    .location-group label {
+      font-size: 12px;
+      color: #888;
+      display: block;
+      margin-bottom: 4px;
+      font-weight: 600;
+    }
+    .location-group .dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+    .location-group input[type="text"] {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .location-group input[type="text"]:focus {
+      border-color: #2563eb;
+    }
+    .coords {
+      font-size: 11px;
+      color: #aaa;
+      margin-top: 3px;
+      min-height: 14px;
+    }
+
+    .suggestions {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      max-height: 200px;
+      overflow-y: auto;
+      z-index: 2000;
+      display: none;
+    }
+    .suggestions.visible { display: block; }
+    .suggestion-item {
+      padding: 8px 10px;
+      cursor: pointer;
+      font-size: 13px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .suggestion-item:last-child { border-bottom: none; }
+    .suggestion-item:hover { background: #f0f4ff; }
+
+    .or-click { text-align: center; color: #aaa; font-size: 11px; margin-bottom: 12px; }
 
     button {
       width: 100%;
@@ -72,6 +165,26 @@
     #result .row { display: flex; justify-content: space-between; margin-bottom: 4px; }
     #result .label { color: #666; }
     #result .value { font-weight: 600; }
+    #result .savings { color: #16a34a; }
+    #result .no-savings { color: #dc2626; }
+    #result .pickup-address {
+      font-size: 12px;
+      color: #555;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid #d1fae5;
+    }
+
+    @media (max-width: 480px) {
+      #panel {
+        top: 8px;
+        left: 8px;
+        right: 8px;
+        width: auto;
+        max-height: calc(100vh - 16px);
+        overflow-y: auto;
+      }
+    }
   </style>
 </head>
 <body>
@@ -79,29 +192,72 @@
 
   <div id="panel">
     <h1>farewalk</h1>
-    <p class="instructions">
-      Click the map to set <strong>origin</strong> (1st click) and
-      <strong>destination</strong> (2nd click), or type coordinates below.
-    </p>
 
-    <div class="fields">
-      <div>
-        <label>Origin lat</label>
-        <input type="number" id="origin_lat" step="any" placeholder="40.7128">
-      </div>
-      <div>
-        <label>Origin lng</label>
-        <input type="number" id="origin_lng" step="any" placeholder="-74.0060">
-      </div>
-      <div>
-        <label>Dest lat</label>
-        <input type="number" id="dest_lat" step="any" placeholder="40.7580">
-      </div>
-      <div>
-        <label>Dest lng</label>
-        <input type="number" id="dest_lng" step="any" placeholder="-73.9855">
-      </div>
+    <div class="location-group" id="origin-group">
+      <label><span class="dot" style="background:#2563eb"></span>Pickup location</label>
+      <input type="text" id="origin_input" placeholder="Search for a location..." autocomplete="off">
+      <div class="coords" id="origin_coords"></div>
+      <div class="suggestions" id="origin_suggestions"></div>
     </div>
+
+    <div class="location-group" id="dest-group">
+      <label><span class="dot" style="background:#dc2626"></span>Destination</label>
+      <input type="text" id="dest_input" placeholder="Search for a location..." autocomplete="off">
+      <div class="coords" id="dest_coords"></div>
+      <div class="suggestions" id="dest_suggestions"></div>
+    </div>
+
+    <p class="or-click">or click the map: 1st click = origin, 2nd = destination</p>
+
+    <details>
+      <summary>Search settings</summary>
+      <div class="settings-grid">
+        <div class="setting-field">
+          <label for="radius_m">Search radius (m)</label>
+          <input type="number" id="radius_m" min="1" step="25" value="500">
+        </div>
+        <div class="setting-field">
+          <label for="local_circle_radius_m">Origin circle (m)</label>
+          <input type="number" id="local_circle_radius_m" min="0" step="10" value="100">
+        </div>
+        <div class="setting-field">
+          <label for="half_angle_deg">Half angle (deg)</label>
+          <input type="number" id="half_angle_deg" min="1" max="179" step="1" value="60">
+        </div>
+        <div class="setting-field">
+          <label for="arc_steps">Arc steps</label>
+          <input type="number" id="arc_steps" min="2" step="1" value="24">
+        </div>
+        <div class="setting-field">
+          <label for="road_point_spacing_m">Road spacing (m)</label>
+          <input type="number" id="road_point_spacing_m" min="1" step="5" value="35">
+        </div>
+        <div class="setting-field">
+          <label for="budget">Price-call budget</label>
+          <input type="number" id="budget" min="1" step="1" value="15">
+        </div>
+        <div class="setting-field">
+          <label for="walk_penalty">Walk penalty</label>
+          <input type="number" id="walk_penalty" min="0" step="0.1" value="0.5">
+        </div>
+        <div class="setting-field">
+          <label for="max_leaf_size">Max leaf size</label>
+          <input type="number" id="max_leaf_size" min="1" step="1" value="6">
+        </div>
+        <div class="setting-field setting-wide">
+          <label for="network_type">Road network</label>
+          <select id="network_type">
+            <option value="drive">drive</option>
+            <option value="drive_service">drive_service</option>
+            <option value="walk">walk</option>
+            <option value="bike">bike</option>
+            <option value="all">all</option>
+            <option value="all_private">all_private</option>
+          </select>
+        </div>
+      </div>
+      <div class="pricing-mode" id="pricing_mode">Pricing: loading...</div>
+    </details>
 
     <button id="searchBtn" onclick="runSearch()">Search</button>
     <button class="btn-clear" onclick="clearAll()">Clear</button>
@@ -110,15 +266,17 @@
 
     <div id="result">
       <h3>Best pickup point</h3>
-      <div class="row"><span class="label">Price</span><span class="value" id="r-price"></span></div>
+      <div class="row"><span class="label">Original price</span><span class="value" id="r-original"></span></div>
+      <div class="row"><span class="label">New price</span><span class="value" id="r-price"></span></div>
+      <div class="row"><span class="label">You save</span><span class="value" id="r-savings"></span></div>
       <div class="row"><span class="label">Walk distance</span><span class="value" id="r-walk"></span></div>
       <div class="row"><span class="label">Score</span><span class="value" id="r-score"></span></div>
-      <div class="row"><span class="label">Pickup</span><span class="value" id="r-pickup"></span></div>
+      <div class="pickup-address" id="r-address"></div>
     </div>
   </div>
 
   <script>
-    const map = L.map("map").setView([40.7128, -74.006], 14);
+    const map = L.map("map").setView([-37.8136, 144.9631], 13);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: "&copy; OpenStreetMap contributors",
       maxZoom: 19,
@@ -128,24 +286,185 @@
     let destMarker = null;
     let pickupMarker = null;
     let walkLine = null;
-    let clickState = "origin"; // "origin" | "destination"
+    let searchAreaLayer = null;
+    let clickState = "origin";
+
+    let originLat = null, originLng = null;
+    let destLat = null, destLng = null;
 
     const originIcon = L.divIcon({ className: "", html: '<div style="background:#2563eb;width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>' });
     const destIcon = L.divIcon({ className: "", html: '<div style="background:#dc2626;width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>' });
-    const pickupIcon = L.divIcon({ className: "", html: '<div style="background:#16a34a;width:16px;height:16px;border-radius:50%;border:3px solid white;box-shadow:0 1px 6px rgba(0,0,0,0.4)"></div>' });
+    const pickupIcon = L.divIcon({
+      className: "",
+      html: '<div style="background:#16a34a;width:20px;height:20px;border-radius:50%;border:3px solid white;box-shadow:0 1px 6px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center"><div style="width:6px;height:6px;background:white;border-radius:50%"></div></div>',
+      iconSize: [20, 20],
+      iconAnchor: [10, 10],
+    });
 
+    // --- Geocoding via Nominatim ---
+    let searchTimeout = null;
+
+    const numericSettings = [
+      "radius_m",
+      "local_circle_radius_m",
+      "half_angle_deg",
+      "arc_steps",
+      "road_point_spacing_m",
+      "budget",
+      "walk_penalty",
+      "max_leaf_size",
+    ];
+
+    function setInputValue(id, value) {
+      const el = document.getElementById(id);
+      if (el && value !== undefined && value !== null) {
+        el.value = value;
+      }
+    }
+
+    function readNumber(id, integerOnly) {
+      const value = document.getElementById(id).value;
+      if (value === "") return null;
+      const parsed = integerOnly ? parseInt(value, 10) : parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    async function loadDefaults() {
+      try {
+        const res = await fetch("/config/defaults");
+        if (!res.ok) throw new Error("defaults unavailable");
+        const defaults = await res.json();
+
+        numericSettings.forEach(id => setInputValue(id, defaults[id]));
+        setInputValue("network_type", defaults.network_type);
+        document.getElementById("pricing_mode").textContent =
+          "Pricing: " + (defaults.pricing_mode === "uber" ? "Uber" : "stub estimate");
+      } catch {
+        document.getElementById("pricing_mode").textContent = "Pricing: defaults from page";
+      }
+    }
+
+    function buildSearchPayload() {
+      const payload = {
+        origin_lat: originLat,
+        origin_lng: originLng,
+        destination_lat: destLat,
+        destination_lng: destLng,
+      };
+
+      const numberFields = [
+        "radius_m",
+        "local_circle_radius_m",
+        "half_angle_deg",
+        "road_point_spacing_m",
+        "walk_penalty",
+      ];
+      const integerFields = ["arc_steps", "budget", "max_leaf_size"];
+
+      numberFields.forEach(id => {
+        const value = readNumber(id, false);
+        if (value !== null) payload[id] = value;
+      });
+      integerFields.forEach(id => {
+        const value = readNumber(id, true);
+        if (value !== null) payload[id] = value;
+      });
+
+      const networkType = document.getElementById("network_type").value;
+      if (networkType) payload.network_type = networkType;
+
+      return payload;
+    }
+
+    loadDefaults();
+
+    function geocodeSearch(query, callback) {
+      if (query.length < 3) { callback([]); return; }
+      fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`)
+        .then(r => r.json())
+        .then(callback)
+        .catch(() => callback([]));
+    }
+
+    function reverseGeocode(lat, lng, callback) {
+      fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&addressdetails=1`)
+        .then(r => r.json())
+        .then(data => callback(data.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`))
+        .catch(() => callback(`${lat.toFixed(5)}, ${lng.toFixed(5)}`));
+    }
+
+    function setupSearch(inputId, suggestionsId, coordsId, onSelect) {
+      const input = document.getElementById(inputId);
+      const sugBox = document.getElementById(suggestionsId);
+
+      input.addEventListener("input", () => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+          geocodeSearch(input.value, (results) => {
+            sugBox.innerHTML = "";
+            if (results.length === 0) { sugBox.classList.remove("visible"); return; }
+            results.forEach(r => {
+              const div = document.createElement("div");
+              div.className = "suggestion-item";
+              div.textContent = r.display_name;
+              div.addEventListener("click", () => {
+                input.value = r.display_name.split(",").slice(0, 2).join(",").trim();
+                document.getElementById(coordsId).textContent = `${parseFloat(r.lat).toFixed(5)}, ${parseFloat(r.lon).toFixed(5)}`;
+                sugBox.classList.remove("visible");
+                onSelect(parseFloat(r.lat), parseFloat(r.lon), input.value);
+              });
+              sugBox.appendChild(div);
+            });
+            sugBox.classList.add("visible");
+          });
+        }, 300);
+      });
+
+      input.addEventListener("blur", () => {
+        setTimeout(() => sugBox.classList.remove("visible"), 200);
+      });
+      input.addEventListener("focus", () => {
+        if (sugBox.children.length > 0) sugBox.classList.add("visible");
+      });
+    }
+
+    setupSearch("origin_input", "origin_suggestions", "origin_coords", (lat, lng, name) => {
+      originLat = lat; originLng = lng;
+      if (originMarker) map.removeLayer(originMarker);
+      originMarker = L.marker([lat, lng], { icon: originIcon }).addTo(map).bindPopup("Origin: " + name);
+      map.setView([lat, lng], 15);
+    });
+
+    setupSearch("dest_input", "dest_suggestions", "dest_coords", (lat, lng, name) => {
+      destLat = lat; destLng = lng;
+      if (destMarker) map.removeLayer(destMarker);
+      destMarker = L.marker([lat, lng], { icon: destIcon }).addTo(map).bindPopup("Destination: " + name);
+      if (originLat) {
+        map.fitBounds([[originLat, originLng], [lat, lng]], { padding: [60, 60] });
+      } else {
+        map.setView([lat, lng], 15);
+      }
+    });
+
+    // --- Map click ---
     map.on("click", function (e) {
       const { lat, lng } = e.latlng;
       if (clickState === "origin") {
-        document.getElementById("origin_lat").value = lat.toFixed(6);
-        document.getElementById("origin_lng").value = lng.toFixed(6);
+        originLat = lat; originLng = lng;
+        document.getElementById("origin_coords").textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        reverseGeocode(lat, lng, (name) => {
+          document.getElementById("origin_input").value = name.split(",").slice(0, 2).join(",").trim();
+        });
         if (originMarker) map.removeLayer(originMarker);
         originMarker = L.marker([lat, lng], { icon: originIcon }).addTo(map).bindPopup("Origin");
         clickState = "destination";
         setStatus("Now click to set destination");
       } else {
-        document.getElementById("dest_lat").value = lat.toFixed(6);
-        document.getElementById("dest_lng").value = lng.toFixed(6);
+        destLat = lat; destLng = lng;
+        document.getElementById("dest_coords").textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        reverseGeocode(lat, lng, (name) => {
+          document.getElementById("dest_input").value = name.split(",").slice(0, 2).join(",").trim();
+        });
         if (destMarker) map.removeLayer(destMarker);
         destMarker = L.marker([lat, lng], { icon: destIcon }).addTo(map).bindPopup("Destination");
         clickState = "origin";
@@ -153,6 +472,7 @@
       }
     });
 
+    // --- Helpers ---
     function setStatus(msg, isError) {
       const el = document.getElementById("status");
       el.textContent = msg;
@@ -160,26 +480,23 @@
     }
 
     function clearAll() {
-      [originMarker, destMarker, pickupMarker, walkLine].forEach(layer => {
+      [originMarker, destMarker, pickupMarker, walkLine, searchAreaLayer].forEach(layer => {
         if (layer) map.removeLayer(layer);
       });
-      originMarker = destMarker = pickupMarker = walkLine = null;
+      originMarker = destMarker = pickupMarker = walkLine = searchAreaLayer = null;
+      originLat = originLng = destLat = destLng = null;
       clickState = "origin";
-      document.getElementById("origin_lat").value = "";
-      document.getElementById("origin_lng").value = "";
-      document.getElementById("dest_lat").value = "";
-      document.getElementById("dest_lng").value = "";
+      document.getElementById("origin_input").value = "";
+      document.getElementById("dest_input").value = "";
+      document.getElementById("origin_coords").textContent = "";
+      document.getElementById("dest_coords").textContent = "";
       document.getElementById("result").style.display = "none";
       setStatus("");
     }
 
+    // --- Search ---
     async function runSearch() {
-      const oLat = parseFloat(document.getElementById("origin_lat").value);
-      const oLng = parseFloat(document.getElementById("origin_lng").value);
-      const dLat = parseFloat(document.getElementById("dest_lat").value);
-      const dLng = parseFloat(document.getElementById("dest_lng").value);
-
-      if ([oLat, oLng, dLat, dLng].some(isNaN)) {
+      if ([originLat, originLng, destLat, destLng].some(v => v === null)) {
         setStatus("Set both origin and destination first", true);
         return;
       }
@@ -188,22 +505,16 @@
       btn.disabled = true;
       setStatus("Searching...");
 
-      // Place markers if set via text input
       if (originMarker) map.removeLayer(originMarker);
-      originMarker = L.marker([oLat, oLng], { icon: originIcon }).addTo(map).bindPopup("Origin");
+      originMarker = L.marker([originLat, originLng], { icon: originIcon }).addTo(map).bindPopup("Origin");
       if (destMarker) map.removeLayer(destMarker);
-      destMarker = L.marker([dLat, dLng], { icon: destIcon }).addTo(map).bindPopup("Destination");
+      destMarker = L.marker([destLat, destLng], { icon: destIcon }).addTo(map).bindPopup("Destination");
 
       try {
         const res = await fetch("/search/trip", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            origin_lat: oLat,
-            origin_lng: oLng,
-            destination_lat: dLat,
-            destination_lng: dLng,
-          }),
+          body: JSON.stringify(buildSearchPayload()),
         });
 
         if (!res.ok) {
@@ -213,35 +524,72 @@
 
         const data = await res.json();
 
-        // Show pickup marker
+        if (searchAreaLayer) map.removeLayer(searchAreaLayer);
+        searchAreaLayer = null;
+        if (data.search_area_geojson) {
+          searchAreaLayer = L.geoJSON(data.search_area_geojson, {
+            style: {
+              color: "#f59e0b",
+              weight: 2,
+              opacity: 0.95,
+              fillColor: "#fbbf24",
+              fillOpacity: 0.18,
+              dashArray: "8 6",
+            },
+          }).addTo(map);
+        }
+
+        // Pickup marker
         if (pickupMarker) map.removeLayer(pickupMarker);
         pickupMarker = L.marker([data.pickup_lat, data.pickup_lng], { icon: pickupIcon })
           .addTo(map)
-          .bindPopup("Pickup point")
+          .bindPopup("Walk here for pickup")
           .openPopup();
 
-        // Draw walk line from origin to pickup
+        // Walk line from origin to pickup
         if (walkLine) map.removeLayer(walkLine);
         walkLine = L.polyline(
-          [[oLat, oLng], [data.pickup_lat, data.pickup_lng]],
+          [[originLat, originLng], [data.pickup_lat, data.pickup_lng]],
           { color: "#2563eb", weight: 3, dashArray: "6 8", opacity: 0.7 }
         ).addTo(map);
 
-        // Fit map to show all markers
-        const bounds = L.latLngBounds([
-          [oLat, oLng],
-          [dLat, dLng],
-          [data.pickup_lat, data.pickup_lng],
-        ]);
+        // Fit map
+        const bounds = searchAreaLayer
+          ? searchAreaLayer.getBounds()
+          : L.latLngBounds([[originLat, originLng], [destLat, destLng]]);
+        bounds.extend([originLat, originLng]);
+        bounds.extend([destLat, destLng]);
+        bounds.extend([data.pickup_lat, data.pickup_lng]);
         map.fitBounds(bounds, { padding: [60, 60] });
 
-        // Show results
-        document.getElementById("r-price").textContent = "$" + data.price.toFixed(2);
+        // Prices
+        const origPrice = data.original_price;
+        const newPrice = data.price;
+        const diff = origPrice - newPrice;
+
+        document.getElementById("r-original").textContent = "$" + origPrice.toFixed(2);
+        document.getElementById("r-price").textContent = "$" + newPrice.toFixed(2);
+
+        const savingsEl = document.getElementById("r-savings");
+        if (diff > 0) {
+          savingsEl.textContent = "$" + diff.toFixed(2);
+          savingsEl.className = "value savings";
+        } else {
+          savingsEl.textContent = "-$" + Math.abs(diff).toFixed(2);
+          savingsEl.className = "value no-savings";
+        }
+
         document.getElementById("r-walk").textContent = Math.round(data.walk_distance_m) + "m";
         document.getElementById("r-score").textContent = data.score.toFixed(2);
-        document.getElementById("r-pickup").textContent = data.pickup_lat.toFixed(5) + ", " + data.pickup_lng.toFixed(5);
-        document.getElementById("result").style.display = "block";
 
+        // Reverse geocode pickup location
+        const addrEl = document.getElementById("r-address");
+        addrEl.textContent = `Pickup at ${data.pickup_lat.toFixed(5)}, ${data.pickup_lng.toFixed(5)}`;
+        reverseGeocode(data.pickup_lat, data.pickup_lng, (name) => {
+          addrEl.textContent = "Walk to: " + name;
+        });
+
+        document.getElementById("result").style.display = "block";
         setStatus("Done");
       } catch (err) {
         setStatus(err.message, true);

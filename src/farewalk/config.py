@@ -7,7 +7,7 @@ class Settings(BaseSettings):
 
     default_network_type: str = "drive"
 
-    default_search_radius_m: float = 500.0
+    default_search_radius_m: float = 5000.0
     default_half_angle_deg: float = 60.0
     default_local_circle_radius_m: float = 100.0
     default_arc_steps: int = 24
@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     default_search_budget: int = 15
     default_walk_penalty_lambda: float = 0.5
     default_max_leaf_size: int = 6
+
+    uber_cookie: str = ""
+    uber_product: str = "UBERX"
 
     model_config = SettingsConfigDict(
         env_file=".env",
