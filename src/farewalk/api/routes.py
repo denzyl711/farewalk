@@ -14,7 +14,11 @@ from farewalk.models.geo import LatLng
 from farewalk.schemas.roads import TripRoadGraphRequest, TripRoadGraphResponse
 from farewalk.schemas.search import TripSearchRequest, TripSearchResponse
 from farewalk.services.candidates import generate_candidate_points
-from farewalk.services.pricing import stub_price_provider, uber_price_provider
+from farewalk.services.pricing import (
+    RegisteredPricingProvider,
+    default_pricing_provider_id,
+    resolve_pricing_provider,
+)
 from farewalk.services.roads import get_road_graph_for_trip_search
 from farewalk.services.search import search
 
@@ -23,8 +27,10 @@ logger = logging.getLogger(__name__)
 _DONE = object()
 
 
-def _select_price_provider():
-    return uber_price_provider if settings.uber_cookie else stub_price_provider
+def _select_price_provider(
+    requested_provider: str | None = None,
+) -> RegisteredPricingProvider:
+    return resolve_pricing_provider(requested_provider)
 
 
 def _event_line(event: dict[str, Any]) -> str:
@@ -38,6 +44,7 @@ def health() -> dict[str, str]:
 
 @router.get("/config/defaults")
 def config_defaults() -> dict[str, float | int | str | bool]:
+    provider_id = default_pricing_provider_id()
     return {
         "network_type": settings.default_network_type,
         "radius_m": settings.default_search_radius_m,
@@ -49,7 +56,8 @@ def config_defaults() -> dict[str, float | int | str | bool]:
         "budget": settings.default_search_budget,
         "walk_penalty": settings.default_walk_penalty_lambda,
         "max_leaf_size": settings.default_max_leaf_size,
-        "pricing_mode": "uber" if settings.uber_cookie else "stub",
+        "pricing_provider": provider_id,
+        "pricing_mode": provider_id,
     }
 
 
@@ -137,10 +145,11 @@ def trip_search(payload: TripSearchRequest) -> TripSearchResponse:
         perf_counter() - stage_start,
     )
 
-    get_price = _select_price_provider()
+    get_price = _select_price_provider(payload.pricing_provider)
     logger.info(
-        "trip_search pricing provider=%s",
-        "uber" if settings.uber_cookie else "stub",
+        "trip_search pricing provider=%s requested_provider=%s",
+        get_price.provider_id,
+        payload.pricing_provider,
     )
 
     stage_start = perf_counter()
@@ -265,10 +274,10 @@ def _trip_search_event_stream(payload: TripSearchRequest):
                 "progress": 0.45,
             })
 
-            get_price = _select_price_provider()
+            get_price = _select_price_provider(payload.pricing_provider)
             emit({
                 "type": "pricing_provider",
-                "provider": "uber" if settings.uber_cookie else "stub",
+                "provider": get_price.provider_id,
                 "progress": 0.48,
             })
 

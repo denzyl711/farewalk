@@ -23,9 +23,14 @@ MOCK_RESULT = ScoredCandidate(
 MOCK_ORIGINAL_PRICE = 18.75
 
 
-def mock_price_provider(pickup: LatLng, destination: LatLng) -> float:
-    return MOCK_ORIGINAL_PRICE
+class MockPriceProvider:
+    provider_id = "mock"
 
+    def __call__(self, pickup: LatLng, destination: LatLng) -> float:
+        return MOCK_ORIGINAL_PRICE
+
+
+MOCK_PRICE_PROVIDER = MockPriceProvider()
 
 class TestHealthEndpoint:
     def test_returns_ok(self):
@@ -54,7 +59,7 @@ class TestTripSearchEndpoint:
         )
         pricing_patch = patch(
             "farewalk.api.routes._select_price_provider",
-            return_value=mock_price_provider,
+            return_value=MOCK_PRICE_PROVIDER,
         )
         search_patch = patch("farewalk.api.routes.search", return_value=result)
         return graph_patch, candidates_patch, pricing_patch, search_patch
@@ -110,12 +115,27 @@ class TestTripSearchEndpoint:
             "road_point_spacing_m": 25,
             "candidate_merge_radius_m": 15,
             "max_leaf_size": 4,
+            "pricing_provider": "stub",
             "network_type": "drive",
         }
         graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
         with graph_p, cands_p, pricing_p, search_p:
             response = client.post("/search/trip", json=payload)
         assert response.status_code == 200
+
+    def test_requested_pricing_provider_is_forwarded(self):
+        graph_p, cands_p, _pricing_p, search_p = self._mock_pipeline()
+        provider_patch = patch(
+            "farewalk.api.routes._select_price_provider",
+            return_value=MOCK_PRICE_PROVIDER,
+        )
+        with graph_p, cands_p, provider_patch as select_p, search_p:
+            response = client.post(
+                "/search/trip",
+                json={**BASE_PAYLOAD, "pricing_provider": "stub"},
+            )
+        assert response.status_code == 200
+        select_p.assert_called_once_with("stub")
 
     def test_stream_returns_progress_events(self):
         graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()

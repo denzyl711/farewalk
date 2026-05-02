@@ -195,6 +195,7 @@ class TestSearch:
             candidates, ORIGIN, DESTINATION,
             self._constant_price(10.0),
             budget=5,
+            walk_penalty=0.5,
         )
         assert result is not None
         assert result.candidate == candidates[0]
@@ -207,6 +208,7 @@ class TestSearch:
             candidates, ORIGIN, DESTINATION,
             self._constant_price(10.0),
             budget=5,
+            walk_penalty=0.5,
         )
         assert isinstance(result, ScoredCandidate)
         assert result.price == 10.0

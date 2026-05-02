@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -18,6 +18,7 @@ class TripSearchRequest(BaseModel):
     budget: int | None = None
     walk_penalty: float | None = None
     max_leaf_size: int | None = None
+    pricing_provider: Literal["stub", "uber"] | None = None
 
 
 class TripSearchResponse(BaseModel):

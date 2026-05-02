@@ -1,4 +1,6 @@
 import math
+from dataclasses import dataclass
+from typing import Callable, Literal
 
 import httpx
 
@@ -7,6 +9,18 @@ from farewalk.models.geo import LatLng
 
 _BASE_FARE = 3.50
 _PRICE_PER_KM = 1.80
+ProviderId = Literal["stub", "uber"]
+PriceFunction = Callable[[LatLng, LatLng], float]
+
+
+@dataclass(frozen=True)
+class RegisteredPricingProvider:
+    provider_id: ProviderId
+    quote: PriceFunction
+    requires_cookie: bool = False
+
+    def __call__(self, pickup: LatLng, destination: LatLng) -> float:
+        return self.quote(pickup, destination)
 
 
 def stub_price_provider(pickup: LatLng, destination: LatLng) -> float:
@@ -146,3 +160,34 @@ def uber_price_provider(pickup: LatLng, destination: LatLng) -> float:
                 return fare_e5 / 100_000
 
     raise ValueError(f"Product '{target}' not found in Uber response")
+
+
+_PROVIDERS: dict[ProviderId, RegisteredPricingProvider] = {
+    "stub": RegisteredPricingProvider(
+        provider_id="stub",
+        quote=stub_price_provider,
+    ),
+    "uber": RegisteredPricingProvider(
+        provider_id="uber",
+        quote=uber_price_provider,
+        requires_cookie=True,
+    ),
+}
+
+
+def get_pricing_provider(provider_id: ProviderId) -> RegisteredPricingProvider:
+    return _PROVIDERS[provider_id]
+
+
+def default_pricing_provider_id() -> ProviderId:
+    configured = settings.default_pricing_provider
+    if configured == "auto":
+        return "uber" if settings.uber_cookie else "stub"
+    return configured
+
+
+def resolve_pricing_provider(
+    provider_id: ProviderId | None = None,
+) -> RegisteredPricingProvider:
+    selected_id = provider_id or default_pricing_provider_id()
+    return get_pricing_provider(selected_id)

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +19,7 @@ class Settings(BaseSettings):
     default_search_budget: int = 100
     default_walk_penalty_lambda: float = 0.001
     default_max_leaf_size: int = 12
+    default_pricing_provider: Literal["auto", "stub", "uber"] = "auto"
 
     uber_cookie: str = ""
     uber_product: str = "UBERX"
