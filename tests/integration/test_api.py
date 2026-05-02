@@ -59,7 +59,7 @@ class TestHealthEndpoint:
         assert response.json() == {"status": "ok"}
 
 
-class TestTripSearchEndpoint:
+class TestTripSearchStreamEndpoint:
     def _mock_search(self, result=MOCK_RESULT):
         return patch("farewalk.api.routes.search", return_value=result)
 
@@ -84,30 +84,30 @@ class TestTripSearchEndpoint:
         search_patch = patch("farewalk.api.routes.search", return_value=result)
         return graph_patch, candidates_patch, pricing_patch, search_patch
 
-    def test_valid_request_returns_200(self, client):
-        graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
-        with graph_p, cands_p, pricing_p, search_p:
-            response = client.post("/search/trip", json=BASE_PAYLOAD)
-        assert response.status_code == 200
+    def _stream_events(self, client, payload):
+        with client.stream("POST", "/search/trip/stream", json=payload) as response:
+            assert response.status_code == 200
+            return [
+                json.loads(line)
+                for line in response.iter_lines()
+                if line
+            ]
 
-    def test_response_shape(self, client):
+    def test_stream_returns_progress_events(self, client):
         graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
         with graph_p, cands_p, pricing_p, search_p:
-            response = client.post("/search/trip", json=BASE_PAYLOAD)
-        data = response.json()
-        assert "pickup_lat" in data
-        assert "pickup_lng" in data
-        assert "price" in data
-        assert "original_price" in data
-        assert "walk_distance_m" in data
-        assert "score" in data
-        assert "search_area_geojson" in data
+            events = self._stream_events(client, BASE_PAYLOAD)
 
-    def test_response_values_match_result(self, client):
-        graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
-        with graph_p, cands_p, pricing_p, search_p:
-            response = client.post("/search/trip", json=BASE_PAYLOAD)
-        data = response.json()
+        event_types = [event["type"] for event in events]
+        assert "stage" in event_types
+        assert "road_graph" in event_types
+        assert "candidates" in event_types
+        assert "result" in event_types
+        candidates_event = next(event for event in events if event["type"] == "candidates")
+        assert candidates_event["count"] == 1
+        assert candidates_event["points"] == [{"lat": 40.7135, "lng": -74.005}]
+        result_event = next(event for event in events if event["type"] == "result")
+        data = result_event["result"]
         assert data["pickup_lat"] == pytest.approx(MOCK_RESULT.candidate.lat)
         assert data["pickup_lng"] == pytest.approx(MOCK_RESULT.candidate.lng)
         assert data["price"] == pytest.approx(MOCK_RESULT.price)
@@ -116,12 +116,13 @@ class TestTripSearchEndpoint:
         assert data["score"] == pytest.approx(MOCK_RESULT.score)
         assert data["search_area_geojson"] is None
 
-    def test_no_candidates_returns_404(self, client):
+    def test_no_candidates_emits_error(self, client):
         graph_p, cands_p, pricing_p, _ = self._mock_pipeline()
         search_p = patch("farewalk.api.routes.search", return_value=None)
         with graph_p, cands_p, pricing_p, search_p:
-            response = client.post("/search/trip", json=BASE_PAYLOAD)
-        assert response.status_code == 404
+            events = self._stream_events(client, BASE_PAYLOAD)
+        error_event = next(event for event in events if event["type"] == "error")
+        assert error_event["detail"] == "No pickup candidates found in search area"
 
     def test_accepts_optional_params(self, client):
         payload = {
@@ -140,8 +141,8 @@ class TestTripSearchEndpoint:
         }
         graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
         with graph_p, cands_p, pricing_p, search_p:
-            response = client.post("/search/trip", json=payload)
-        assert response.status_code == 200
+            events = self._stream_events(client, payload)
+        assert any(event["type"] == "result" for event in events)
 
     def test_requested_pricing_provider_is_forwarded(self, client):
         graph_p, cands_p, _pricing_p, search_p = self._mock_pipeline()
@@ -150,11 +151,11 @@ class TestTripSearchEndpoint:
             return_value=MOCK_PRICE_PROVIDER,
         )
         with graph_p, cands_p, provider_patch as select_p, search_p:
-            response = client.post(
-                "/search/trip",
-                json={**BASE_PAYLOAD, "pricing_provider": "stub"},
+            events = self._stream_events(
+                client,
+                {**BASE_PAYLOAD, "pricing_provider": "stub"},
             )
-        assert response.status_code == 200
+        assert any(event["type"] == "result" for event in events)
         select_p.assert_called_once_with("stub")
 
     def test_auto_pricing_provider_is_forwarded(self, client):
@@ -164,38 +165,15 @@ class TestTripSearchEndpoint:
             return_value=MOCK_PRICE_PROVIDER,
         )
         with graph_p, cands_p, provider_patch as select_p, search_p:
-            response = client.post(
-                "/search/trip",
-                json={**BASE_PAYLOAD, "pricing_provider": "auto"},
+            events = self._stream_events(
+                client,
+                {**BASE_PAYLOAD, "pricing_provider": "auto"},
             )
-        assert response.status_code == 200
+        assert any(event["type"] == "result" for event in events)
         select_p.assert_called_once_with("auto")
 
-    def test_stream_returns_progress_events(self, client):
-        graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
-        with graph_p, cands_p, pricing_p, search_p:
-            with client.stream("POST", "/search/trip/stream", json=BASE_PAYLOAD) as response:
-                assert response.status_code == 200
-                events = [
-                    json.loads(line)
-                    for line in response.iter_lines()
-                    if line
-                ]
-
-        event_types = [event["type"] for event in events]
-        assert "stage" in event_types
-        assert "road_graph" in event_types
-        assert "candidates" in event_types
-        assert "result" in event_types
-        candidates_event = next(event for event in events if event["type"] == "candidates")
-        assert candidates_event["count"] == 1
-        assert candidates_event["points"] == [{"lat": 40.7135, "lng": -74.005}]
-        result_event = next(event for event in events if event["type"] == "result")
-        assert result_event["result"]["pickup_lat"] == pytest.approx(MOCK_RESULT.candidate.lat)
-        assert result_event["result"]["original_price"] == pytest.approx(MOCK_ORIGINAL_PRICE)
-
     def test_missing_required_fields_returns_422(self, client):
-        response = client.post("/search/trip", json={"origin_lat": 40.7128})
+        response = client.post("/search/trip/stream", json={"origin_lat": 40.7128})
         assert response.status_code == 422
 
     @pytest.mark.parametrize(
@@ -217,35 +195,35 @@ class TestTripSearchEndpoint:
         ],
     )
     def test_invalid_optional_params_return_422(self, client, field, value):
-        response = client.post("/search/trip", json={**BASE_PAYLOAD, field: value})
+        response = client.post("/search/trip/stream", json={**BASE_PAYLOAD, field: value})
         assert response.status_code == 422
 
-    def test_pricing_provider_configuration_error_returns_503(self, client):
+    def test_pricing_provider_configuration_error_emits_error(self, client):
         graph_p, cands_p, _pricing_p, search_p = self._mock_pipeline()
         provider_patch = patch(
             "farewalk.api.routes._select_price_provider",
             side_effect=PricingConfigurationError("not configured", "uber"),
         )
         with graph_p, cands_p, search_p, provider_patch:
-            response = client.post(
-                "/search/trip",
-                json={**BASE_PAYLOAD, "pricing_provider": "uber"},
+            events = self._stream_events(
+                client,
+                {**BASE_PAYLOAD, "pricing_provider": "uber"},
             )
-        assert response.status_code == 503
-        assert response.json()["detail"] == "uber pricing is not configured"
+        error_event = next(event for event in events if event["type"] == "error")
+        assert error_event["detail"] == "uber pricing is not configured"
 
-    def test_search_pricing_timeout_returns_504(self, client):
+    def test_search_pricing_timeout_emits_error(self, client):
         graph_p, cands_p, pricing_p, _search_p = self._mock_pipeline()
         search_patch = patch(
             "farewalk.api.routes.search",
             side_effect=PricingTimeoutError("timed out", "uber"),
         )
         with graph_p, cands_p, pricing_p, search_patch:
-            response = client.post("/search/trip", json=BASE_PAYLOAD)
-        assert response.status_code == 504
-        assert response.json()["detail"] == "uber pricing request timed out"
+            events = self._stream_events(client, BASE_PAYLOAD)
+        error_event = next(event for event in events if event["type"] == "error")
+        assert error_event["detail"] == "uber pricing request timed out"
 
-    def test_original_price_failure_returns_504(self, client):
+    def test_original_price_failure_emits_error(self, client):
         graph_p, cands_p, _pricing_p, _search_p = self._mock_pipeline()
         provider_patch = patch(
             "farewalk.api.routes._select_price_provider",
@@ -253,9 +231,9 @@ class TestTripSearchEndpoint:
         )
         search_patch = patch("farewalk.api.routes.search", return_value=MOCK_RESULT)
         with graph_p, cands_p, provider_patch, search_patch:
-            response = client.post("/search/trip", json=BASE_PAYLOAD)
-        assert response.status_code == 504
-        assert response.json()["detail"] == "uber pricing request timed out"
+            events = self._stream_events(client, BASE_PAYLOAD)
+        error_event = next(event for event in events if event["type"] == "error")
+        assert error_event["detail"] == "uber pricing request timed out"
 
     def test_stream_pricing_error_emits_structured_error(self, client):
         graph_p, cands_p, _pricing_p, search_p = self._mock_pipeline()
@@ -276,3 +254,9 @@ class TestTripSearchEndpoint:
         assert error_event["provider"] == "uber"
         assert error_event["error_type"] == "PricingConfigurationError"
         assert error_event["detail"] == "uber pricing is not configured"
+
+
+class TestRemovedSyncSearchEndpoint:
+    def test_sync_search_route_is_removed(self, client):
+        response = client.post("/search/trip", json=BASE_PAYLOAD)
+        assert response.status_code == 404
