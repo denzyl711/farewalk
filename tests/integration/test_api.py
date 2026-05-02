@@ -4,11 +4,8 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from farewalk.main import app
 from farewalk.models.geo import LatLng
 from farewalk.models.road import CandidatePoint, ScoredCandidate
-
-client = TestClient(app)
 
 ORIGIN = {"origin_lat": 40.7128, "origin_lng": -74.0060}
 DESTINATION = {"destination_lat": 40.7580, "destination_lng": -73.9855}
@@ -32,8 +29,18 @@ class MockPriceProvider:
 
 MOCK_PRICE_PROVIDER = MockPriceProvider()
 
+
+@pytest.fixture(scope="module")
+def client():
+    # Import the app lazily so pytest collection does not pay the full FastAPI/OSMnx import cost.
+    from farewalk.main import app
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+
 class TestHealthEndpoint:
-    def test_returns_ok(self):
+    def test_returns_ok(self, client):
         response = client.get("/health")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
@@ -64,13 +71,13 @@ class TestTripSearchEndpoint:
         search_patch = patch("farewalk.api.routes.search", return_value=result)
         return graph_patch, candidates_patch, pricing_patch, search_patch
 
-    def test_valid_request_returns_200(self):
+    def test_valid_request_returns_200(self, client):
         graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
         with graph_p, cands_p, pricing_p, search_p:
             response = client.post("/search/trip", json=BASE_PAYLOAD)
         assert response.status_code == 200
 
-    def test_response_shape(self):
+    def test_response_shape(self, client):
         graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
         with graph_p, cands_p, pricing_p, search_p:
             response = client.post("/search/trip", json=BASE_PAYLOAD)
@@ -83,7 +90,7 @@ class TestTripSearchEndpoint:
         assert "score" in data
         assert "search_area_geojson" in data
 
-    def test_response_values_match_result(self):
+    def test_response_values_match_result(self, client):
         graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
         with graph_p, cands_p, pricing_p, search_p:
             response = client.post("/search/trip", json=BASE_PAYLOAD)
@@ -96,14 +103,14 @@ class TestTripSearchEndpoint:
         assert data["score"] == pytest.approx(MOCK_RESULT.score)
         assert data["search_area_geojson"] is None
 
-    def test_no_candidates_returns_404(self):
+    def test_no_candidates_returns_404(self, client):
         graph_p, cands_p, pricing_p, _ = self._mock_pipeline()
         search_p = patch("farewalk.api.routes.search", return_value=None)
         with graph_p, cands_p, pricing_p, search_p:
             response = client.post("/search/trip", json=BASE_PAYLOAD)
         assert response.status_code == 404
 
-    def test_accepts_optional_params(self):
+    def test_accepts_optional_params(self, client):
         payload = {
             **BASE_PAYLOAD,
             "budget": 5,
@@ -123,7 +130,7 @@ class TestTripSearchEndpoint:
             response = client.post("/search/trip", json=payload)
         assert response.status_code == 200
 
-    def test_requested_pricing_provider_is_forwarded(self):
+    def test_requested_pricing_provider_is_forwarded(self, client):
         graph_p, cands_p, _pricing_p, search_p = self._mock_pipeline()
         provider_patch = patch(
             "farewalk.api.routes._select_price_provider",
@@ -137,7 +144,7 @@ class TestTripSearchEndpoint:
         assert response.status_code == 200
         select_p.assert_called_once_with("stub")
 
-    def test_auto_pricing_provider_is_forwarded(self):
+    def test_auto_pricing_provider_is_forwarded(self, client):
         graph_p, cands_p, _pricing_p, search_p = self._mock_pipeline()
         provider_patch = patch(
             "farewalk.api.routes._select_price_provider",
@@ -151,7 +158,7 @@ class TestTripSearchEndpoint:
         assert response.status_code == 200
         select_p.assert_called_once_with("auto")
 
-    def test_stream_returns_progress_events(self):
+    def test_stream_returns_progress_events(self, client):
         graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
         with graph_p, cands_p, pricing_p, search_p:
             with client.stream("POST", "/search/trip/stream", json=BASE_PAYLOAD) as response:
@@ -174,6 +181,6 @@ class TestTripSearchEndpoint:
         assert result_event["result"]["pickup_lat"] == pytest.approx(MOCK_RESULT.candidate.lat)
         assert result_event["result"]["original_price"] == pytest.approx(MOCK_ORIGINAL_PRICE)
 
-    def test_missing_required_fields_returns_422(self):
+    def test_missing_required_fields_returns_422(self, client):
         response = client.post("/search/trip", json={"origin_lat": 40.7128})
         assert response.status_code == 422
