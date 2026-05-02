@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from farewalk.models.geo import LatLng
-from farewalk.models.road import CandidatePoint, ScoredCandidate
+from farewalk.models.road import CandidatePoint, ScoredCandidate, SearchOutcome
 from farewalk.services.pricing import PricingConfigurationError, PricingTimeoutError
 
 ORIGIN = {"origin_lat": 40.7128, "origin_lng": -74.0060}
@@ -19,6 +19,7 @@ MOCK_RESULT = ScoredCandidate(
     score=60.0,
 )
 MOCK_ORIGINAL_PRICE = 18.75
+MOCK_OUTCOME = SearchOutcome(best=MOCK_RESULT, top_candidates=[MOCK_RESULT])
 
 
 class MockPriceProvider:
@@ -53,7 +54,7 @@ class TestHealthEndpoint:
 
 
 class TestTripSearchStreamEndpoint:
-    def _mock_pipeline(self, result=MOCK_RESULT):
+    def _mock_pipeline(self, result=MOCK_OUTCOME):
         import networkx as nx
 
         mock_graph = nx.MultiDiGraph()
@@ -100,6 +101,15 @@ class TestTripSearchStreamEndpoint:
         assert result["pickup_lng"] == pytest.approx(MOCK_RESULT.candidate.lng)
         assert result["price"] == pytest.approx(MOCK_RESULT.price)
         assert result["original_price"] == pytest.approx(MOCK_ORIGINAL_PRICE)
+        assert result["savings"] == pytest.approx(MOCK_ORIGINAL_PRICE - MOCK_RESULT.price)
+        assert len(result["options"]) == 1
+        option = result["options"][0]
+        assert option["pickup_lat"] == pytest.approx(MOCK_RESULT.candidate.lat)
+        assert option["pickup_lng"] == pytest.approx(MOCK_RESULT.candidate.lng)
+        assert option["price"] == pytest.approx(MOCK_RESULT.price)
+        assert option["walk_distance_m"] == pytest.approx(MOCK_RESULT.walk_distance_m)
+        assert option["score"] == pytest.approx(MOCK_RESULT.score)
+        assert option["savings"] == pytest.approx(MOCK_ORIGINAL_PRICE - MOCK_RESULT.price)
         metadata = result_event["metadata"]
         assert metadata["search_id"] == search_id
         assert metadata["provider"] == "mock"

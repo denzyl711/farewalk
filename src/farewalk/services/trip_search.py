@@ -35,6 +35,7 @@ class TripSearchExecution:
     origin: LatLng
     destination: LatLng
     result: Any
+    top_results: list[Any]
     original_price: float
     polygon: Any
     candidates: list[Any]
@@ -252,7 +253,7 @@ def execute_trip_search(
     })
 
     stage_start = perf_counter()
-    result = search(
+    search_outcome = search(
         candidates=candidates,
         origin=origin,
         destination=destination,
@@ -263,6 +264,7 @@ def execute_trip_search(
         on_event=emit,
     )
     search_elapsed_s = perf_counter() - stage_start
+    result = search_outcome.best
     logger.info(
         "trip_search search_id=%s search completed found=%s elapsed_s=%.2f",
         search_id,
@@ -312,6 +314,7 @@ def execute_trip_search(
         origin=origin,
         destination=destination,
         result=result,
+        top_results=search_outcome.top_candidates,
         original_price=original_price,
         polygon=polygon,
         candidates=candidates,

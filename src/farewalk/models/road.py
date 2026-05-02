@@ -13,3 +13,9 @@ class ScoredCandidate:
     price: float
     walk_distance_m: float
     score: float
+
+
+@dataclass(frozen=True)
+class SearchOutcome:
+    best: ScoredCandidate | None
+    top_candidates: list[ScoredCandidate]

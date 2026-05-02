@@ -3,7 +3,7 @@ import math
 import pytest
 
 from farewalk.models.geo import LatLng
-from farewalk.models.road import CandidatePoint, ScoredCandidate
+from farewalk.models.road import CandidatePoint, ScoredCandidate, SearchOutcome
 from farewalk.services.search import (
     _ZoneState,
     _pick_next_point,
@@ -187,7 +187,7 @@ class TestSearch:
 
     def test_empty_candidates(self):
         result = search([], ORIGIN, DESTINATION, self._constant_price(10.0))
-        assert result is None
+        assert result == SearchOutcome(best=None, top_candidates=[])
 
     def test_single_candidate(self):
         candidates = [_cp(40.7130, -74.0055)]
@@ -197,10 +197,11 @@ class TestSearch:
             budget=5,
             walk_penalty=0.5,
         )
-        assert result is not None
-        assert result.candidate == candidates[0]
-        assert result.price == 10.0
-        assert result.score > 0
+        assert result.best is not None
+        assert result.best.candidate == candidates[0]
+        assert result.best.price == 10.0
+        assert result.best.score > 0
+        assert result.top_candidates == [result.best]
 
     def test_returns_scored_candidate(self):
         candidates = [_cp(40.7130, -74.005), _cp(40.7135, -74.004)]
@@ -210,10 +211,11 @@ class TestSearch:
             budget=5,
             walk_penalty=0.5,
         )
-        assert isinstance(result, ScoredCandidate)
-        assert result.price == 10.0
-        assert result.walk_distance_m >= 0
-        assert result.score == pytest.approx(result.price + 0.5 * result.walk_distance_m)
+        assert result.best is not None
+        assert isinstance(result.best, ScoredCandidate)
+        assert result.best.price == 10.0
+        assert result.best.walk_distance_m >= 0
+        assert result.best.score == pytest.approx(result.best.price + 0.5 * result.best.walk_distance_m)
 
     def test_respects_budget(self):
         candidates = [_cp(40.7128 + i * 0.0005, -74.006 + i * 0.0005) for i in range(20)]
@@ -247,9 +249,9 @@ class TestSearch:
             budget=10,
             walk_penalty=0.5,
         )
-        assert result is not None
+        assert result.best is not None
         # The close+cheap point should win over far+cheap (walk penalty) and close+expensive
-        assert result.candidate == close_cheap
+        assert result.best.candidate == close_cheap
 
     def test_walk_penalty_affects_score(self):
         candidates = [_cp(40.7130, -74.005)]
@@ -265,7 +267,9 @@ class TestSearch:
             budget=5,
             walk_penalty=2.0,
         )
-        assert low_penalty.score < high_penalty.score
+        assert low_penalty.best is not None
+        assert high_penalty.best is not None
+        assert low_penalty.best.score < high_penalty.best.score
 
     def test_many_candidates_returns_result(self):
         # Smoke test: lots of candidates, should not crash
@@ -279,7 +283,8 @@ class TestSearch:
             self._constant_price(10.0),
             budget=10,
         )
-        assert result is not None
+        assert result.best is not None
+        assert 1 <= len(result.top_candidates) <= 7
 
     def test_finds_cheaper_zone(self):
         # Two clusters: west (expensive) and east (cheap)
@@ -298,5 +303,27 @@ class TestSearch:
             budget=10,
             walk_penalty=0.0,  # ignore walking to isolate price
         )
-        assert result is not None
-        assert result.price == 5.0
+        assert result.best is not None
+        assert result.best.price == 5.0
+
+    def test_returns_ranked_top_candidates(self):
+        candidates = [_cp(40.7128, -74.006 + i * 0.0001) for i in range(12)]
+
+        def price_by_lng(pickup: LatLng, destination: LatLng) -> float:
+            return 100.0 - pickup.lng
+
+        result = search(
+            candidates,
+            ORIGIN,
+            DESTINATION,
+            price_by_lng,
+            budget=12,
+            walk_penalty=0.0,
+            max_leaf_size=2,
+        )
+
+        assert result.best is not None
+        assert len(result.top_candidates) == 7
+        scores = [candidate.score for candidate in result.top_candidates]
+        assert scores == sorted(scores)
+        assert result.top_candidates[0] == result.best

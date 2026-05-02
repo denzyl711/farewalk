@@ -421,6 +421,54 @@
       padding-top: 6px;
       border-top: 1px solid #d1fae5;
     }
+    .options-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .pickup-option {
+      width: 100%;
+      border: 1px solid #bbf7d0;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.82);
+      color: var(--ink);
+      padding: 9px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .pickup-option:hover {
+      background: #ecfdf5;
+    }
+    .pickup-option.active {
+      border-color: #16a34a;
+      box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.14);
+    }
+    .option-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 12px;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+    .option-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      font-size: 11px;
+    }
+    .option-grid span {
+      display: block;
+      color: var(--muted);
+      font-weight: 800;
+    }
+    .option-grid strong {
+      display: block;
+      margin-top: 1px;
+      color: var(--ink);
+      font-weight: 800;
+    }
 
     .layer-toggles {
       display: grid;
@@ -619,13 +667,14 @@
     <div id="event-log"></div>
 
     <div id="result">
-      <h3>Best pickup point</h3>
+      <h3>Best pickup points</h3>
       <div class="row"><span class="label">Original price</span><span class="value" id="r-original"></span></div>
       <div class="row"><span class="label">New price</span><span class="value" id="r-price"></span></div>
       <div class="row"><span class="label">You save</span><span class="value" id="r-savings"></span></div>
       <div class="row"><span class="label">Walk distance</span><span class="value" id="r-walk"></span></div>
       <div class="row"><span class="label">Score</span><span class="value" id="r-score"></span></div>
       <div class="pickup-address" id="r-address"></div>
+      <div class="options-list" id="r-options"></div>
     </div>
   </div>
 
@@ -655,6 +704,7 @@
     const zoneLayerGroup = L.layerGroup().addTo(map);
     const candidateLayerGroup = L.layerGroup().addTo(map);
     const sampleLayerGroup = L.layerGroup().addTo(map);
+    const optionLayerGroup = L.layerGroup().addTo(map);
     let clickState = "origin";
 
     let originLat = null, originLng = null;
@@ -993,7 +1043,9 @@
       zoneLayerGroup.clearLayers();
       candidateLayerGroup.clearLayers();
       sampleLayerGroup.clearLayers();
+      optionLayerGroup.clearLayers();
       document.getElementById("result").style.display = "none";
+      document.getElementById("r-options").innerHTML = "";
     }
 
     function setLayerVisible(group, visible) {
@@ -1164,6 +1216,65 @@
       setTimeout(() => resultEl.classList.add("result-focus"), 180);
     }
 
+    function formatMoney(value) {
+      const sign = value < 0 ? "-" : "";
+      return sign + "$" + Math.abs(value).toFixed(2);
+    }
+
+    function setActiveOption(index) {
+      document.querySelectorAll(".pickup-option").forEach((button, i) => {
+        button.classList.toggle("active", i === index);
+      });
+    }
+
+    function drawPickupOptions(options) {
+      optionLayerGroup.clearLayers();
+      const list = document.getElementById("r-options");
+      list.innerHTML = "";
+
+      options.forEach((option, index) => {
+        const marker = L.circleMarker([option.pickup_lat, option.pickup_lng], {
+          radius: index === 0 ? 9 : 7,
+          color: index === 0 ? "#166534" : "#0f766e",
+          weight: 3,
+          opacity: 0.95,
+          fillColor: index === 0 ? "#22c55e" : "#86efac",
+          fillOpacity: 0.86,
+        }).bindTooltip(
+          `#${index + 1} ${formatMoney(option.price)} | ${Math.round(option.walk_distance_m)}m`,
+          { direction: "top", sticky: true }
+        ).addTo(optionLayerGroup);
+
+        marker.on("click", () => {
+          setActiveOption(index);
+          focusResultView(option);
+        });
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "pickup-option" + (index === 0 ? " active" : "");
+        button.innerHTML = `
+          <div class="option-head">
+            <span>#${index + 1} pickup</span>
+            <span>${formatMoney(option.savings)} saved</span>
+          </div>
+          <div class="option-grid">
+            <div><span>Trip</span><strong>${formatMoney(option.price)}</strong></div>
+            <div><span>Walk</span><strong>${Math.round(option.walk_distance_m)}m</strong></div>
+            <div><span>Score</span><strong>${option.score.toFixed(1)}</strong></div>
+          </div>
+        `;
+        button.addEventListener("click", () => {
+          setActiveOption(index);
+          focusResultView(option);
+          marker.openTooltip();
+        });
+        list.appendChild(button);
+      });
+
+      bringLayerGroupToFront(optionLayerGroup);
+    }
+
     function showResult(data) {
       if (pickupMarker) map.removeLayer(pickupMarker);
       pickupMarker = L.marker([data.pickup_lat, data.pickup_lng], { icon: pickupIcon })
@@ -1195,6 +1306,7 @@
 
       document.getElementById("r-walk").textContent = Math.round(data.walk_distance_m) + "m";
       document.getElementById("r-score").textContent = data.score.toFixed(2);
+      drawPickupOptions(data.options || []);
 
       const addrEl = document.getElementById("r-address");
       addrEl.textContent = `Pickup at ${data.pickup_lat.toFixed(5)}, ${data.pickup_lng.toFixed(5)}`;

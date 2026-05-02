@@ -11,7 +11,7 @@ from shapely.geometry import mapping
 from farewalk.config import settings
 from farewalk.models.geo import LatLng
 from farewalk.schemas.roads import TripRoadGraphRequest, TripRoadGraphResponse
-from farewalk.schemas.search import TripSearchRequest, TripSearchResponse
+from farewalk.schemas.search import PickupOption, TripSearchRequest, TripSearchResponse
 from farewalk.services.pricing import (
     PricingError,
     default_pricing_provider_id,
@@ -95,6 +95,17 @@ def _trip_search_event_stream(payload: TripSearchRequest):
         search_id = new_search_id()
         try:
             execution = execute_trip_search(payload, emit=emit, search_id=search_id)
+            options = [
+                PickupOption(
+                    pickup_lat=item.candidate.lat,
+                    pickup_lng=item.candidate.lng,
+                    price=item.price,
+                    walk_distance_m=item.walk_distance_m,
+                    score=item.score,
+                    savings=execution.original_price - item.price,
+                )
+                for item in execution.top_results
+            ]
             response = TripSearchResponse(
                 pickup_lat=execution.result.candidate.lat,
                 pickup_lng=execution.result.candidate.lng,
@@ -102,6 +113,8 @@ def _trip_search_event_stream(payload: TripSearchRequest):
                 original_price=execution.original_price,
                 walk_distance_m=execution.result.walk_distance_m,
                 score=execution.result.score,
+                savings=execution.original_price - execution.result.price,
+                options=options,
                 search_area_geojson=mapping(execution.polygon) if execution.polygon is not None else None,
             )
 

@@ -5,7 +5,7 @@ from typing import Any, Callable, Protocol
 
 from farewalk.config import settings
 from farewalk.models.geo import LatLng
-from farewalk.models.road import CandidatePoint, ScoredCandidate
+from farewalk.models.road import CandidatePoint, ScoredCandidate, SearchOutcome
 from farewalk.utils.spatial import (
     KDNode,
     ProjectedCandidate,
@@ -27,6 +27,7 @@ class PriceProvider(Protocol):
 
 
 SearchEventCallback = Callable[[dict[str, Any]], None]
+DEFAULT_TOP_CANDIDATE_COUNT = 7
 
 
 class _ZoneState:
@@ -150,7 +151,7 @@ def search(
     walk_penalty: float | None = None,
     max_leaf_size: int | None = None,
     on_event: SearchEventCallback | None = None,
-) -> ScoredCandidate | None:
+) -> SearchOutcome:
     """Find the best pickup point using budgeted explore/exploit search.
 
     Args:
@@ -164,12 +165,12 @@ def search(
         on_event: Optional callback for streaming/debug visualization events.
 
     Returns:
-        The best ScoredCandidate found, or None if no candidates.
+        SearchOutcome with the best candidate and ranked sampled candidates.
     """
     if not candidates:
         if on_event:
             on_event({"type": "search_empty", "reason": "no_candidates"})
-        return None
+        return SearchOutcome(best=None, top_candidates=[])
 
     if budget is None:
         budget = settings.default_search_budget
@@ -236,10 +237,11 @@ def search(
     if not zone_states:
         if on_event:
             on_event({"type": "search_empty", "reason": "no_nonempty_zones"})
-        return None
+        return SearchOutcome(best=None, top_candidates=[])
 
     remaining = budget
     best_overall: ScoredCandidate | None = None
+    scored_candidates: list[ScoredCandidate] = []
 
     def _score_and_record(
         state: _ZoneState,
@@ -277,6 +279,7 @@ def search(
 
         state.scores.append(score)
         state.sampled.add(idx)
+        scored_candidates.append(scored)
         if state.best is None or score < state.best.score:
             state.best = scored
         if best_overall is None or score < best_overall.score:
@@ -357,6 +360,7 @@ def search(
         _score_and_record(state, idx, point, phase="refinement")
 
     if on_event:
+        top_candidates = sorted(scored_candidates, key=lambda item: item.score)[:DEFAULT_TOP_CANDIDATE_COUNT]
         on_event({
             "type": "search_done",
             "calls_completed": budget - remaining,
@@ -368,6 +372,19 @@ def search(
                 "walk_distance_m": best_overall.walk_distance_m,
                 "score": best_overall.score,
             } if best_overall else None,
+            "top_candidates": [
+                {
+                    "lat": item.candidate.lat,
+                    "lng": item.candidate.lng,
+                    "price": item.price,
+                    "walk_distance_m": item.walk_distance_m,
+                    "score": item.score,
+                }
+                for item in top_candidates
+            ],
         })
 
-    return best_overall
+    return SearchOutcome(
+        best=best_overall,
+        top_candidates=sorted(scored_candidates, key=lambda item: item.score)[:DEFAULT_TOP_CANDIDATE_COUNT],
+    )

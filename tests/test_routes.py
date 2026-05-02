@@ -8,7 +8,7 @@ from farewalk.services.trip_search import (
     pricing_error_event,
 )
 from farewalk.models.geo import LatLng
-from farewalk.models.road import CandidatePoint, ScoredCandidate
+from farewalk.models.road import CandidatePoint, ScoredCandidate, SearchOutcome
 from farewalk.schemas.search import TripSearchRequest
 from farewalk.services.pricing import PricingConfigurationError, PricingTimeoutError
 
@@ -18,6 +18,7 @@ MOCK_RESULT = ScoredCandidate(
     walk_distance_m=95.0,
     score=60.0,
 )
+MOCK_OUTCOME = SearchOutcome(best=MOCK_RESULT, top_candidates=[MOCK_RESULT])
 
 
 class MockPriceProvider:
@@ -61,10 +62,11 @@ class TestExecuteTripSearch:
         with patch("farewalk.services.trip_search.get_road_graph_for_trip_search", return_value=(_mock_graph(), None)), \
              patch("farewalk.services.trip_search.generate_candidate_points", return_value=[CandidatePoint(lat=40.7135, lng=-74.005)]), \
              patch("farewalk.services.trip_search.select_price_provider", return_value=MockPriceProvider()), \
-             patch("farewalk.services.trip_search.search", return_value=MOCK_RESULT):
+             patch("farewalk.services.trip_search.search", return_value=MOCK_OUTCOME):
             execution = execute_trip_search(payload)
 
         assert execution.result == MOCK_RESULT
+        assert execution.top_results == [MOCK_RESULT]
         assert execution.original_price == pytest.approx(18.75)
         assert execution.provider_id == "mock"
         assert len(execution.search_id) == 12
@@ -78,7 +80,7 @@ class TestExecuteTripSearch:
         with patch("farewalk.services.trip_search.get_road_graph_for_trip_search", return_value=(_mock_graph(), None)), \
              patch("farewalk.services.trip_search.generate_candidate_points", return_value=[CandidatePoint(lat=40.7135, lng=-74.005)]), \
              patch("farewalk.services.trip_search.select_price_provider", return_value=MockPriceProvider()), \
-             patch("farewalk.services.trip_search.search", return_value=None):
+             patch("farewalk.services.trip_search.search", return_value=SearchOutcome(best=None, top_candidates=[])):
             with pytest.raises(TripSearchNotFoundError):
                 execute_trip_search(payload)
 
@@ -88,7 +90,7 @@ class TestExecuteTripSearch:
         with patch("farewalk.services.trip_search.get_road_graph_for_trip_search", return_value=(_mock_graph(), None)), \
              patch("farewalk.services.trip_search.generate_candidate_points", return_value=[CandidatePoint(lat=40.7135, lng=-74.005)]), \
              patch("farewalk.services.trip_search.select_price_provider", return_value=RaisingPriceProvider()), \
-             patch("farewalk.services.trip_search.search", return_value=MOCK_RESULT):
+             patch("farewalk.services.trip_search.search", return_value=MOCK_OUTCOME):
             with pytest.raises(PricingTimeoutError):
                 execute_trip_search(payload)
 

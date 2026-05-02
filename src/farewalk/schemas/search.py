@@ -30,6 +30,15 @@ class TripSearchRequest(BaseModel):
     pricing_provider: Literal["auto", "stub", "uber"] | None = None
 
 
+class PickupOption(BaseModel):
+    pickup_lat: float
+    pickup_lng: float
+    price: float
+    walk_distance_m: float
+    score: float
+    savings: float
+
+
 class TripSearchResponse(BaseModel):
     pickup_lat: float
     pickup_lng: float
@@ -37,4 +46,6 @@ class TripSearchResponse(BaseModel):
     original_price: float
     walk_distance_m: float
     score: float
+    savings: float
+    options: list[PickupOption] = Field(default_factory=list)
     search_area_geojson: dict[str, Any] | None = None
