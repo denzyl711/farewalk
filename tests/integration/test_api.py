@@ -60,18 +60,18 @@ class TestTripSearchStreamEndpoint:
         mock_graph.add_node(1, x=-74.005, y=40.7135)
 
         graph_patch = patch(
-            "farewalk.api.routes.get_road_graph_for_trip_search",
+            "farewalk.services.trip_search.get_road_graph_for_trip_search",
             return_value=(mock_graph, None),
         )
         candidates_patch = patch(
-            "farewalk.api.routes.generate_candidate_points",
+            "farewalk.services.trip_search.generate_candidate_points",
             return_value=[CandidatePoint(lat=40.7135, lng=-74.005)],
         )
         pricing_patch = patch(
-            "farewalk.api.routes._select_price_provider",
+            "farewalk.services.trip_search.select_price_provider",
             return_value=MockPriceProvider(),
         )
-        search_patch = patch("farewalk.api.routes.search", return_value=result)
+        search_patch = patch("farewalk.services.trip_search.search", return_value=result)
         return graph_patch, candidates_patch, pricing_patch, search_patch
 
     def _stream_events(self, client, payload):
@@ -112,7 +112,7 @@ class TestTripSearchStreamEndpoint:
     def test_stream_pricing_error(self, client):
         graph_p, cands_p, _pricing_p, search_p = self._mock_pipeline()
         provider_patch = patch(
-            "farewalk.api.routes._select_price_provider",
+            "farewalk.services.trip_search.select_price_provider",
             side_effect=PricingConfigurationError("not configured", "uber"),
         )
         with graph_p, cands_p, provider_patch, search_p:

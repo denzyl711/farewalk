@@ -2,10 +2,10 @@ from unittest.mock import patch
 
 import pytest
 
-from farewalk.api.routes import (
+from farewalk.services.trip_search import (
     TripSearchNotFoundError,
-    _execute_trip_search,
-    _pricing_error_event,
+    execute_trip_search,
+    pricing_error_event,
 )
 from farewalk.models.geo import LatLng
 from farewalk.models.road import CandidatePoint, ScoredCandidate
@@ -58,11 +58,11 @@ class TestExecuteTripSearch:
     def test_returns_execution_result(self):
         payload = _payload()
 
-        with patch("farewalk.api.routes.get_road_graph_for_trip_search", return_value=(_mock_graph(), None)), \
-             patch("farewalk.api.routes.generate_candidate_points", return_value=[CandidatePoint(lat=40.7135, lng=-74.005)]), \
-             patch("farewalk.api.routes._select_price_provider", return_value=MockPriceProvider()), \
-             patch("farewalk.api.routes.search", return_value=MOCK_RESULT):
-            execution = _execute_trip_search(payload)
+        with patch("farewalk.services.trip_search.get_road_graph_for_trip_search", return_value=(_mock_graph(), None)), \
+             patch("farewalk.services.trip_search.generate_candidate_points", return_value=[CandidatePoint(lat=40.7135, lng=-74.005)]), \
+             patch("farewalk.services.trip_search.select_price_provider", return_value=MockPriceProvider()), \
+             patch("farewalk.services.trip_search.search", return_value=MOCK_RESULT):
+            execution = execute_trip_search(payload)
 
         assert execution.result == MOCK_RESULT
         assert execution.original_price == pytest.approx(18.75)
@@ -75,27 +75,27 @@ class TestExecuteTripSearch:
     def test_no_candidates_found_raises(self):
         payload = _payload()
 
-        with patch("farewalk.api.routes.get_road_graph_for_trip_search", return_value=(_mock_graph(), None)), \
-             patch("farewalk.api.routes.generate_candidate_points", return_value=[CandidatePoint(lat=40.7135, lng=-74.005)]), \
-             patch("farewalk.api.routes._select_price_provider", return_value=MockPriceProvider()), \
-             patch("farewalk.api.routes.search", return_value=None):
+        with patch("farewalk.services.trip_search.get_road_graph_for_trip_search", return_value=(_mock_graph(), None)), \
+             patch("farewalk.services.trip_search.generate_candidate_points", return_value=[CandidatePoint(lat=40.7135, lng=-74.005)]), \
+             patch("farewalk.services.trip_search.select_price_provider", return_value=MockPriceProvider()), \
+             patch("farewalk.services.trip_search.search", return_value=None):
             with pytest.raises(TripSearchNotFoundError):
-                _execute_trip_search(payload)
+                execute_trip_search(payload)
 
     def test_original_price_error_bubbles_up(self):
         payload = _payload()
 
-        with patch("farewalk.api.routes.get_road_graph_for_trip_search", return_value=(_mock_graph(), None)), \
-             patch("farewalk.api.routes.generate_candidate_points", return_value=[CandidatePoint(lat=40.7135, lng=-74.005)]), \
-             patch("farewalk.api.routes._select_price_provider", return_value=RaisingPriceProvider()), \
-             patch("farewalk.api.routes.search", return_value=MOCK_RESULT):
+        with patch("farewalk.services.trip_search.get_road_graph_for_trip_search", return_value=(_mock_graph(), None)), \
+             patch("farewalk.services.trip_search.generate_candidate_points", return_value=[CandidatePoint(lat=40.7135, lng=-74.005)]), \
+             patch("farewalk.services.trip_search.select_price_provider", return_value=RaisingPriceProvider()), \
+             patch("farewalk.services.trip_search.search", return_value=MOCK_RESULT):
             with pytest.raises(PricingTimeoutError):
-                _execute_trip_search(payload)
+                execute_trip_search(payload)
 
 
 class TestPricingErrorEvent:
     def test_formats_structured_error_event(self):
-        event = _pricing_error_event(PricingConfigurationError("not configured", "uber"))
+        event = pricing_error_event(PricingConfigurationError("not configured", "uber"))
         assert event == {
             "type": "error",
             "error_type": "PricingConfigurationError",
