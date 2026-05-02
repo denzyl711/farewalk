@@ -5,6 +5,7 @@ from queue import Queue
 from threading import Thread
 from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -40,6 +41,7 @@ class TripSearchNotFoundError(Exception):
 
 @dataclass(frozen=True)
 class TripSearchExecution:
+    search_id: str
     origin: LatLng
     destination: LatLng
     result: Any
@@ -65,6 +67,15 @@ def _select_price_provider(
 
 def _event_line(event: dict[str, Any]) -> str:
     return json.dumps(event, separators=(",", ":")) + "\n"
+
+
+def _emit_search_event(
+    emit: Any | None,
+    search_id: str,
+    event: dict[str, Any],
+) -> None:
+    if emit:
+        emit({"search_id": search_id, **event})
 
 
 def _pricing_error_detail(exc: PricingError) -> str:
@@ -130,17 +141,20 @@ def _resolved_trip_search_settings(payload: TripSearchRequest) -> dict[str, Any]
 def _execute_trip_search(
     payload: TripSearchRequest,
     emit: Any | None = None,
+    search_id: str | None = None,
 ) -> TripSearchExecution:
     request_start = perf_counter()
+    search_id = search_id or uuid4().hex[:12]
     origin = LatLng(lat=payload.origin_lat, lng=payload.origin_lng)
     destination = LatLng(lat=payload.destination_lat, lng=payload.destination_lng)
     resolved_settings = _resolved_trip_search_settings(payload)
 
     logger.info(
-        "trip_search received origin=(%.6f, %.6f) destination=(%.6f, %.6f) "
+        "trip_search search_id=%s received origin=(%.6f, %.6f) destination=(%.6f, %.6f) "
         "radius_m=%s half_angle_deg=%s local_circle_radius_m=%s arc_steps=%s "
         "network_type=%s road_point_spacing_m=%s candidate_merge_radius_m=%s "
         "budget=%s walk_penalty=%s max_leaf_size=%s",
+        search_id,
         origin.lat,
         origin.lng,
         destination.lat,
@@ -157,22 +171,20 @@ def _execute_trip_search(
         payload.max_leaf_size,
     )
 
-    if emit:
-        emit({
-            "type": "stage",
-            "stage": "request",
-            "message": "Search request received",
-            "progress": 0.03,
-        })
+    _emit_search_event(emit, search_id, {
+        "type": "stage",
+        "stage": "request",
+        "message": "Search request received",
+        "progress": 0.03,
+    })
 
     stage_start = perf_counter()
-    if emit:
-        emit({
-            "type": "stage",
-            "stage": "road_graph",
-            "message": "Fetching OpenStreetMap road graph",
-            "progress": 0.12,
-        })
+    _emit_search_event(emit, search_id, {
+        "type": "stage",
+        "stage": "road_graph",
+        "message": "Fetching OpenStreetMap road graph",
+        "progress": 0.12,
+    })
     graph, polygon = get_road_graph_for_trip_search(
         origin=origin,
         destination=destination,
@@ -184,29 +196,28 @@ def _execute_trip_search(
     )
     road_graph_elapsed_s = perf_counter() - stage_start
     logger.info(
-        "trip_search road_graph fetched nodes=%s edges=%s elapsed_s=%.2f",
+        "trip_search search_id=%s road_graph fetched nodes=%s edges=%s elapsed_s=%.2f",
+        search_id,
         len(graph.nodes),
         len(graph.edges),
         road_graph_elapsed_s,
     )
-    if emit:
-        emit({
-            "type": "road_graph",
-            "nodes": len(graph.nodes),
-            "edges": len(graph.edges),
-            "elapsed_s": road_graph_elapsed_s,
-            "search_area_geojson": mapping(polygon) if polygon is not None else None,
-            "progress": 0.32,
-        })
+    _emit_search_event(emit, search_id, {
+        "type": "road_graph",
+        "nodes": len(graph.nodes),
+        "edges": len(graph.edges),
+        "elapsed_s": road_graph_elapsed_s,
+        "search_area_geojson": mapping(polygon) if polygon is not None else None,
+        "progress": 0.32,
+    })
 
     stage_start = perf_counter()
-    if emit:
-        emit({
-            "type": "stage",
-            "stage": "candidates",
-            "message": "Generating pickup candidates",
-            "progress": 0.38,
-        })
+    _emit_search_event(emit, search_id, {
+        "type": "stage",
+        "stage": "candidates",
+        "message": "Generating pickup candidates",
+        "progress": 0.38,
+    })
     candidates = generate_candidate_points(
         graph,
         origin,
@@ -215,34 +226,34 @@ def _execute_trip_search(
     )
     candidates_elapsed_s = perf_counter() - stage_start
     logger.info(
-        "trip_search candidates generated count=%s elapsed_s=%.2f",
+        "trip_search search_id=%s candidates generated count=%s elapsed_s=%.2f",
+        search_id,
         len(candidates),
         candidates_elapsed_s,
     )
-    if emit:
-        emit({
-            "type": "candidates",
-            "count": len(candidates),
-            "points": [
-                {"lat": candidate.lat, "lng": candidate.lng}
-                for candidate in candidates
-            ],
-            "elapsed_s": candidates_elapsed_s,
-            "progress": 0.45,
-        })
+    _emit_search_event(emit, search_id, {
+        "type": "candidates",
+        "count": len(candidates),
+        "points": [
+            {"lat": candidate.lat, "lng": candidate.lng}
+            for candidate in candidates
+        ],
+        "elapsed_s": candidates_elapsed_s,
+        "progress": 0.45,
+    })
 
     get_price = _select_price_provider(payload.pricing_provider)
     logger.info(
-        "trip_search pricing provider=%s requested_provider=%s",
+        "trip_search search_id=%s pricing provider=%s requested_provider=%s",
+        search_id,
         get_price.provider_id,
         payload.pricing_provider,
     )
-    if emit:
-        emit({
-            "type": "pricing_provider",
-            "provider": get_price.provider_id,
-            "progress": 0.48,
-        })
+    _emit_search_event(emit, search_id, {
+        "type": "pricing_provider",
+        "provider": get_price.provider_id,
+        "progress": 0.48,
+    })
 
     stage_start = perf_counter()
     result = search(
@@ -257,37 +268,40 @@ def _execute_trip_search(
     )
     search_elapsed_s = perf_counter() - stage_start
     logger.info(
-        "trip_search search completed found=%s elapsed_s=%.2f",
+        "trip_search search_id=%s search completed found=%s elapsed_s=%.2f",
+        search_id,
         result is not None,
         search_elapsed_s,
     )
 
     if result is None:
         logger.info(
-            "trip_search no candidates found total_elapsed_s=%.2f",
+            "trip_search search_id=%s no candidates found total_elapsed_s=%.2f",
+            search_id,
             perf_counter() - request_start,
         )
         raise TripSearchNotFoundError("No pickup candidates found in search area")
 
     stage_start = perf_counter()
-    if emit:
-        emit({
-            "type": "stage",
-            "stage": "original_price",
-            "message": "Pricing original pickup",
-            "progress": 0.95,
-        })
+    _emit_search_event(emit, search_id, {
+        "type": "stage",
+        "stage": "original_price",
+        "message": "Pricing original pickup",
+        "progress": 0.95,
+    })
     original_price = get_price(origin, destination)
     original_price_elapsed_s = perf_counter() - stage_start
     logger.info(
-        "trip_search original_price fetched price=%.2f elapsed_s=%.2f",
+        "trip_search search_id=%s original_price fetched price=%.2f elapsed_s=%.2f",
+        search_id,
         original_price,
         original_price_elapsed_s,
     )
 
     logger.info(
-        "trip_search result pickup=(%.6f, %.6f) price=%.2f original_price=%.2f "
+        "trip_search search_id=%s result pickup=(%.6f, %.6f) price=%.2f original_price=%.2f "
         "walk_distance_m=%.1f score=%.2f total_elapsed_s=%.2f",
+        search_id,
         result.candidate.lat,
         result.candidate.lng,
         result.price,
@@ -298,6 +312,7 @@ def _execute_trip_search(
     )
 
     return TripSearchExecution(
+        search_id=search_id,
         origin=origin,
         destination=destination,
         result=result,
@@ -375,8 +390,9 @@ def _trip_search_event_stream(payload: TripSearchRequest):
         queue.put(event)
 
     def worker() -> None:
+        search_id = uuid4().hex[:12]
         try:
-            execution = _execute_trip_search(payload, emit=emit)
+            execution = _execute_trip_search(payload, emit=emit, search_id=search_id)
             response = TripSearchResponse(
                 pickup_lat=execution.result.candidate.lat,
                 pickup_lng=execution.result.candidate.lng,
@@ -388,9 +404,11 @@ def _trip_search_event_stream(payload: TripSearchRequest):
             )
 
             emit({
+                "search_id": execution.search_id,
                 "type": "result",
                 "result": response.model_dump(),
                 "metadata": {
+                    "search_id": execution.search_id,
                     "provider": execution.provider_id,
                     "graph": {
                         "nodes": execution.graph_node_count,
@@ -414,15 +432,17 @@ def _trip_search_event_stream(payload: TripSearchRequest):
             })
         except TripSearchNotFoundError as exc:
             emit({
+                "search_id": search_id,
                 "type": "error",
                 "detail": str(exc),
                 "progress": 1.0,
             })
         except PricingError as exc:
-            emit(_pricing_error_event(exc))
+            emit({"search_id": search_id, **_pricing_error_event(exc)})
         except Exception as exc:
             logger.exception("trip_search stream failed")
             emit({
+                "search_id": search_id,
                 "type": "error",
                 "detail": str(exc),
                 "progress": 1.0,

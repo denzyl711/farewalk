@@ -67,6 +67,7 @@ class TestExecuteTripSearch:
         assert execution.result == MOCK_RESULT
         assert execution.original_price == pytest.approx(18.75)
         assert execution.provider_id == "mock"
+        assert len(execution.search_id) == 12
         assert execution.graph_node_count == 1
         assert execution.graph_edge_count == 0
         assert len(execution.candidates) == 1

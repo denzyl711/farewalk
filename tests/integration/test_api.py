@@ -89,6 +89,10 @@ class TestTripSearchStreamEndpoint:
         assert "road_graph" in event_types
         assert "candidates" in event_types
         assert "result" in event_types
+        search_ids = {event["search_id"] for event in events}
+        assert len(search_ids) == 1
+        search_id = next(iter(search_ids))
+        assert len(search_id) == 12
 
         result_event = next(event for event in events if event["type"] == "result")
         result = result_event["result"]
@@ -97,6 +101,7 @@ class TestTripSearchStreamEndpoint:
         assert result["price"] == pytest.approx(MOCK_RESULT.price)
         assert result["original_price"] == pytest.approx(MOCK_ORIGINAL_PRICE)
         metadata = result_event["metadata"]
+        assert metadata["search_id"] == search_id
         assert metadata["provider"] == "mock"
         assert metadata["graph"] == {"nodes": 1, "edges": 0}
         assert metadata["candidates"] == {"count": 1}
@@ -117,6 +122,7 @@ class TestTripSearchStreamEndpoint:
             )
 
         error_event = next(event for event in events if event["type"] == "error")
+        assert len(error_event["search_id"]) == 12
         assert error_event["provider"] == "uber"
         assert error_event["error_type"] == "PricingConfigurationError"
         assert error_event["detail"] == "uber pricing is not configured"
