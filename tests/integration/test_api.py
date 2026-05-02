@@ -96,6 +96,13 @@ class TestTripSearchStreamEndpoint:
         assert result["pickup_lng"] == pytest.approx(MOCK_RESULT.candidate.lng)
         assert result["price"] == pytest.approx(MOCK_RESULT.price)
         assert result["original_price"] == pytest.approx(MOCK_ORIGINAL_PRICE)
+        metadata = result_event["metadata"]
+        assert metadata["provider"] == "mock"
+        assert metadata["graph"] == {"nodes": 1, "edges": 0}
+        assert metadata["candidates"] == {"count": 1}
+        assert metadata["settings"]["budget"] == 100
+        assert metadata["settings"]["pricing_provider_requested"] == "auto"
+        assert metadata["timings"]["total_elapsed_s"] >= 0
 
     def test_stream_pricing_error(self, client):
         graph_p, cands_p, _pricing_p, search_p = self._mock_pipeline()

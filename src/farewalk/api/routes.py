@@ -49,6 +49,10 @@ class TripSearchExecution:
     graph_node_count: int
     graph_edge_count: int
     provider_id: str
+    resolved_settings: dict[str, Any]
+    road_graph_elapsed_s: float
+    candidates_elapsed_s: float
+    search_elapsed_s: float
     original_price_elapsed_s: float
     total_elapsed_s: float
 
@@ -87,6 +91,42 @@ def _pricing_error_event(exc: PricingError) -> dict[str, Any]:
     }
 
 
+def _resolved_trip_search_settings(payload: TripSearchRequest) -> dict[str, Any]:
+    return {
+        "radius_m": payload.radius_m if payload.radius_m is not None else settings.default_search_radius_m,
+        "half_angle_deg": payload.half_angle_deg if payload.half_angle_deg is not None else settings.default_half_angle_deg,
+        "local_circle_radius_m": (
+            payload.local_circle_radius_m
+            if payload.local_circle_radius_m is not None
+            else settings.default_local_circle_radius_m
+        ),
+        "arc_steps": payload.arc_steps if payload.arc_steps is not None else settings.default_arc_steps,
+        "network_type": payload.network_type if payload.network_type is not None else settings.default_network_type,
+        "road_point_spacing_m": (
+            payload.road_point_spacing_m
+            if payload.road_point_spacing_m is not None
+            else settings.default_road_point_spacing_m
+        ),
+        "candidate_merge_radius_m": (
+            payload.candidate_merge_radius_m
+            if payload.candidate_merge_radius_m is not None
+            else settings.default_candidate_merge_radius_m
+        ),
+        "budget": payload.budget if payload.budget is not None else settings.default_search_budget,
+        "walk_penalty": (
+            payload.walk_penalty
+            if payload.walk_penalty is not None
+            else settings.default_walk_penalty_lambda
+        ),
+        "max_leaf_size": (
+            payload.max_leaf_size
+            if payload.max_leaf_size is not None
+            else settings.default_max_leaf_size
+        ),
+        "pricing_provider_requested": payload.pricing_provider or settings.default_pricing_provider,
+    }
+
+
 def _execute_trip_search(
     payload: TripSearchRequest,
     emit: Any | None = None,
@@ -94,6 +134,7 @@ def _execute_trip_search(
     request_start = perf_counter()
     origin = LatLng(lat=payload.origin_lat, lng=payload.origin_lng)
     destination = LatLng(lat=payload.destination_lat, lng=payload.destination_lng)
+    resolved_settings = _resolved_trip_search_settings(payload)
 
     logger.info(
         "trip_search received origin=(%.6f, %.6f) destination=(%.6f, %.6f) "
@@ -214,10 +255,11 @@ def _execute_trip_search(
         max_leaf_size=payload.max_leaf_size,
         on_event=emit,
     )
+    search_elapsed_s = perf_counter() - stage_start
     logger.info(
         "trip_search search completed found=%s elapsed_s=%.2f",
         result is not None,
-        perf_counter() - stage_start,
+        search_elapsed_s,
     )
 
     if result is None:
@@ -265,6 +307,10 @@ def _execute_trip_search(
         graph_node_count=len(graph.nodes),
         graph_edge_count=len(graph.edges),
         provider_id=get_price.provider_id,
+        resolved_settings=resolved_settings,
+        road_graph_elapsed_s=road_graph_elapsed_s,
+        candidates_elapsed_s=candidates_elapsed_s,
+        search_elapsed_s=search_elapsed_s,
         original_price_elapsed_s=original_price_elapsed_s,
         total_elapsed_s=perf_counter() - request_start,
     )
@@ -344,6 +390,24 @@ def _trip_search_event_stream(payload: TripSearchRequest):
             emit({
                 "type": "result",
                 "result": response.model_dump(),
+                "metadata": {
+                    "provider": execution.provider_id,
+                    "graph": {
+                        "nodes": execution.graph_node_count,
+                        "edges": execution.graph_edge_count,
+                    },
+                    "candidates": {
+                        "count": len(execution.candidates),
+                    },
+                    "timings": {
+                        "road_graph_elapsed_s": execution.road_graph_elapsed_s,
+                        "candidates_elapsed_s": execution.candidates_elapsed_s,
+                        "search_elapsed_s": execution.search_elapsed_s,
+                        "original_price_elapsed_s": execution.original_price_elapsed_s,
+                        "total_elapsed_s": execution.total_elapsed_s,
+                    },
+                    "settings": execution.resolved_settings,
+                },
                 "original_price_elapsed_s": execution.original_price_elapsed_s,
                 "total_elapsed_s": execution.total_elapsed_s,
                 "progress": 1.0,
