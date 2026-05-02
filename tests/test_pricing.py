@@ -68,3 +68,11 @@ class TestPricingProviderSelection:
         monkeypatch.setattr(settings, "default_pricing_provider", "stub")
         provider = resolve_pricing_provider("uber")
         assert provider.provider_id == "uber"
+
+    def test_resolve_pricing_provider_auto_uses_default_resolution(self, monkeypatch):
+        monkeypatch.setattr(settings, "default_pricing_provider", "auto")
+        monkeypatch.setattr(settings, "uber_cookie", "")
+        assert resolve_pricing_provider("auto").provider_id == "stub"
+
+        monkeypatch.setattr(settings, "uber_cookie", "cookie")
+        assert resolve_pricing_provider("auto").provider_id == "uber"

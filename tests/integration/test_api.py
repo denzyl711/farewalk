@@ -137,6 +137,20 @@ class TestTripSearchEndpoint:
         assert response.status_code == 200
         select_p.assert_called_once_with("stub")
 
+    def test_auto_pricing_provider_is_forwarded(self):
+        graph_p, cands_p, _pricing_p, search_p = self._mock_pipeline()
+        provider_patch = patch(
+            "farewalk.api.routes._select_price_provider",
+            return_value=MOCK_PRICE_PROVIDER,
+        )
+        with graph_p, cands_p, provider_patch as select_p, search_p:
+            response = client.post(
+                "/search/trip",
+                json={**BASE_PAYLOAD, "pricing_provider": "auto"},
+            )
+        assert response.status_code == 200
+        select_p.assert_called_once_with("auto")
+
     def test_stream_returns_progress_events(self):
         graph_p, cands_p, pricing_p, search_p = self._mock_pipeline()
         with graph_p, cands_p, pricing_p, search_p:

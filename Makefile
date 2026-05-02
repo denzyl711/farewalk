@@ -6,7 +6,7 @@ install:
 test_unit:
 	pytest tests/ -v --ignore=tests/integration
 
-test_integration: install
+test_integration:
 	pytest tests/integration -v
 
 test_all: test_unit test_integration

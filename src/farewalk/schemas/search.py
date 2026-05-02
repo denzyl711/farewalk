@@ -18,7 +18,7 @@ class TripSearchRequest(BaseModel):
     budget: int | None = None
     walk_penalty: float | None = None
     max_leaf_size: int | None = None
-    pricing_provider: Literal["stub", "uber"] | None = None
+    pricing_provider: Literal["auto", "stub", "uber"] | None = None
 
 
 class TripSearchResponse(BaseModel):

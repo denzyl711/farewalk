@@ -249,15 +249,15 @@
       <div class="settings-grid">
         <div class="setting-field">
           <label for="radius_m">Search radius (m)</label>
-          <input type="number" id="radius_m" min="1" step="25" value="500">
+          <input type="number" id="radius_m" min="1" step="25" value="1000">
         </div>
         <div class="setting-field">
           <label for="local_circle_radius_m">Origin circle (m)</label>
-          <input type="number" id="local_circle_radius_m" min="0" step="10" value="100">
+          <input type="number" id="local_circle_radius_m" min="0" step="10" value="500">
         </div>
         <div class="setting-field">
           <label for="half_angle_deg">Half angle (deg)</label>
-          <input type="number" id="half_angle_deg" min="1" max="179" step="1" value="60">
+          <input type="number" id="half_angle_deg" min="1" max="179" step="1" value="90">
         </div>
         <div class="setting-field">
           <label for="arc_steps">Arc steps</label>
@@ -265,23 +265,23 @@
         </div>
         <div class="setting-field">
           <label for="road_point_spacing_m">Road spacing (m)</label>
-          <input type="number" id="road_point_spacing_m" min="1" step="5" value="35">
+          <input type="number" id="road_point_spacing_m" min="1" step="5" value="100">
         </div>
         <div class="setting-field">
           <label for="candidate_merge_radius_m">Candidate merge (m)</label>
-          <input type="number" id="candidate_merge_radius_m" min="0" step="1" value="15">
+          <input type="number" id="candidate_merge_radius_m" min="0" step="1" value="20">
         </div>
         <div class="setting-field">
           <label for="budget">Price-call budget</label>
-          <input type="number" id="budget" min="1" step="1" value="15">
+          <input type="number" id="budget" min="1" step="1" value="100">
         </div>
         <div class="setting-field">
           <label for="walk_penalty">Walk penalty</label>
-          <input type="number" id="walk_penalty" min="0" step="0.1" value="0.5">
+          <input type="number" id="walk_penalty" min="0" step="0.001" value="0.001">
         </div>
         <div class="setting-field">
           <label for="max_leaf_size">Max leaf size</label>
-          <input type="number" id="max_leaf_size" min="1" step="1" value="6">
+          <input type="number" id="max_leaf_size" min="1" step="1" value="12">
         </div>
         <div class="setting-field setting-wide">
           <label for="network_type">Road network</label>

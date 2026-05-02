@@ -44,7 +44,8 @@ def health() -> dict[str, str]:
 
 @router.get("/config/defaults")
 def config_defaults() -> dict[str, float | int | str | bool]:
-    provider_id = default_pricing_provider_id()
+    provider_id = settings.default_pricing_provider
+    effective_provider_id = default_pricing_provider_id()
     return {
         "network_type": settings.default_network_type,
         "radius_m": settings.default_search_radius_m,
@@ -57,7 +58,7 @@ def config_defaults() -> dict[str, float | int | str | bool]:
         "walk_penalty": settings.default_walk_penalty_lambda,
         "max_leaf_size": settings.default_max_leaf_size,
         "pricing_provider": provider_id,
-        "pricing_mode": provider_id,
+        "pricing_mode": effective_provider_id,
     }
 
 

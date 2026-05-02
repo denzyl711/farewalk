@@ -10,6 +10,7 @@ from farewalk.models.geo import LatLng
 _BASE_FARE = 3.50
 _PRICE_PER_KM = 1.80
 ProviderId = Literal["stub", "uber"]
+RequestedProviderId = Literal["auto", "stub", "uber"]
 PriceFunction = Callable[[LatLng, LatLng], float]
 
 
@@ -187,7 +188,10 @@ def default_pricing_provider_id() -> ProviderId:
 
 
 def resolve_pricing_provider(
-    provider_id: ProviderId | None = None,
+    provider_id: RequestedProviderId | None = None,
 ) -> RegisteredPricingProvider:
-    selected_id = provider_id or default_pricing_provider_id()
+    if provider_id in (None, "auto"):
+        selected_id = default_pricing_provider_id()
+    else:
+        selected_id = provider_id
     return get_pricing_provider(selected_id)
