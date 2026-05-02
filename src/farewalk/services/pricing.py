@@ -14,6 +14,32 @@ RequestedProviderId = Literal["auto", "stub", "uber"]
 PriceFunction = Callable[[LatLng, LatLng], float]
 
 
+class PricingError(Exception):
+    def __init__(self, message: str, provider_id: str):
+        super().__init__(message)
+        self.provider_id = provider_id
+
+
+class PricingConfigurationError(PricingError):
+    pass
+
+
+class PricingTimeoutError(PricingError):
+    pass
+
+
+class PricingAuthError(PricingError):
+    pass
+
+
+class PricingUnavailableError(PricingError):
+    pass
+
+
+class PricingResponseError(PricingError):
+    pass
+
+
 @dataclass(frozen=True)
 class RegisteredPricingProvider:
     provider_id: ProviderId
@@ -130,6 +156,9 @@ _PRODUCTS_QUERY = (
 
 
 def uber_price_provider(pickup: LatLng, destination: LatLng) -> float:
+    if not settings.uber_cookie:
+        raise PricingConfigurationError("Uber pricing is not configured", "uber")
+
     payload = {
         "operationName": "Products",
         "variables": {
@@ -143,24 +172,44 @@ def uber_price_provider(pickup: LatLng, destination: LatLng) -> float:
         "query": _PRODUCTS_QUERY,
     }
 
-    response = httpx.post(
-        _UBER_GRAPHQL_URL,
-        json=payload,
-        headers={**_UBER_HEADERS, "cookie": settings.uber_cookie},
-        timeout=15.0,
-    )
-    response.raise_for_status()
+    try:
+        response = httpx.post(
+            _UBER_GRAPHQL_URL,
+            json=payload,
+            headers={**_UBER_HEADERS, "cookie": settings.uber_cookie},
+            timeout=15.0,
+        )
+        response.raise_for_status()
+    except httpx.TimeoutException as exc:
+        raise PricingTimeoutError("Uber pricing request timed out", "uber") from exc
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in {401, 403}:
+            raise PricingAuthError("Uber pricing authentication failed", "uber") from exc
+        raise PricingUnavailableError(
+            f"Uber pricing request failed with status {exc.response.status_code}",
+            "uber",
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise PricingUnavailableError("Uber pricing request failed", "uber") from exc
 
-    data = response.json()
+    try:
+        data = response.json()
+        tiers = data["data"]["products"]["tiers"]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PricingResponseError("Uber pricing response was malformed", "uber") from exc
+
     target = settings.uber_product
 
-    for tier in data["data"]["products"]["tiers"]:
-        for product in tier["products"]:
-            if product["productClassificationTypeName"] == target:
-                fare_e5 = product["fares"][0]["fareAmountE5"]
-                return fare_e5 / 100_000
+    try:
+        for tier in tiers:
+            for product in tier["products"]:
+                if product["productClassificationTypeName"] == target:
+                    fare_e5 = product["fares"][0]["fareAmountE5"]
+                    return fare_e5 / 100_000
+    except (KeyError, TypeError, IndexError) as exc:
+        raise PricingResponseError("Uber pricing response was malformed", "uber") from exc
 
-    raise ValueError(f"Product '{target}' not found in Uber response")
+    raise PricingResponseError(f"Product '{target}' not found in Uber response", "uber")
 
 
 _PROVIDERS: dict[ProviderId, RegisteredPricingProvider] = {
@@ -194,4 +243,7 @@ def resolve_pricing_provider(
         selected_id = default_pricing_provider_id()
     else:
         selected_id = provider_id
-    return get_pricing_provider(selected_id)
+    provider = get_pricing_provider(selected_id)
+    if provider.requires_cookie and not settings.uber_cookie:
+        raise PricingConfigurationError("Uber pricing is not configured", provider.provider_id)
+    return provider

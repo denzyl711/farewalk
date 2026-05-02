@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 from farewalk.config import settings
@@ -5,10 +6,15 @@ from farewalk.models.geo import LatLng
 from farewalk.services.pricing import (
     _BASE_FARE,
     _PRICE_PER_KM,
+    PricingAuthError,
+    PricingConfigurationError,
+    PricingResponseError,
+    PricingTimeoutError,
     default_pricing_provider_id,
     get_pricing_provider,
     resolve_pricing_provider,
     stub_price_provider,
+    uber_price_provider,
 )
 
 NYC = LatLng(lat=40.7128, lng=-74.0060)
@@ -76,3 +82,50 @@ class TestPricingProviderSelection:
 
         monkeypatch.setattr(settings, "uber_cookie", "cookie")
         assert resolve_pricing_provider("auto").provider_id == "uber"
+
+    def test_resolve_pricing_provider_explicit_uber_requires_cookie(self, monkeypatch):
+        monkeypatch.setattr(settings, "uber_cookie", "")
+        with pytest.raises(PricingConfigurationError):
+            resolve_pricing_provider("uber")
+
+
+class TestUberPriceProviderFailures:
+    def test_timeout_maps_to_pricing_timeout_error(self, monkeypatch):
+        monkeypatch.setattr(settings, "uber_cookie", "cookie")
+
+        def fake_post(*args, **kwargs):
+            raise httpx.ReadTimeout("timed out")
+
+        monkeypatch.setattr(httpx, "post", fake_post)
+
+        with pytest.raises(PricingTimeoutError):
+            uber_price_provider(NYC, MIDTOWN)
+
+    def test_auth_failure_maps_to_pricing_auth_error(self, monkeypatch):
+        monkeypatch.setattr(settings, "uber_cookie", "cookie")
+
+        request = httpx.Request("POST", "https://m.uber.com/go/graphql")
+        response = httpx.Response(403, request=request)
+
+        def fake_post(*args, **kwargs):
+            raise httpx.HTTPStatusError("forbidden", request=request, response=response)
+
+        monkeypatch.setattr(httpx, "post", fake_post)
+
+        with pytest.raises(PricingAuthError):
+            uber_price_provider(NYC, MIDTOWN)
+
+    def test_malformed_response_maps_to_pricing_response_error(self, monkeypatch):
+        monkeypatch.setattr(settings, "uber_cookie", "cookie")
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"data": {}}
+
+        monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: FakeResponse())
+
+        with pytest.raises(PricingResponseError):
+            uber_price_provider(NYC, MIDTOWN)

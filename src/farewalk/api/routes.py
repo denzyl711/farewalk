@@ -15,6 +15,12 @@ from farewalk.schemas.roads import TripRoadGraphRequest, TripRoadGraphResponse
 from farewalk.schemas.search import TripSearchRequest, TripSearchResponse
 from farewalk.services.candidates import generate_candidate_points
 from farewalk.services.pricing import (
+    PricingAuthError,
+    PricingConfigurationError,
+    PricingError,
+    PricingResponseError,
+    PricingTimeoutError,
+    PricingUnavailableError,
     RegisteredPricingProvider,
     default_pricing_provider_id,
     resolve_pricing_provider,
@@ -35,6 +41,51 @@ def _select_price_provider(
 
 def _event_line(event: dict[str, Any]) -> str:
     return json.dumps(event, separators=(",", ":")) + "\n"
+
+
+def _pricing_error_status(exc: PricingError) -> int:
+    if isinstance(exc, PricingConfigurationError):
+        return 503
+    if isinstance(exc, PricingTimeoutError):
+        return 504
+    if isinstance(exc, (PricingAuthError, PricingUnavailableError, PricingResponseError)):
+        return 502
+    return 502
+
+
+def _pricing_error_detail(exc: PricingError) -> str:
+    if isinstance(exc, PricingConfigurationError):
+        return f"{exc.provider_id} pricing is not configured"
+    if isinstance(exc, PricingTimeoutError):
+        return f"{exc.provider_id} pricing request timed out"
+    if isinstance(exc, PricingAuthError):
+        return f"{exc.provider_id} pricing authentication failed"
+    if isinstance(exc, PricingUnavailableError):
+        return f"{exc.provider_id} pricing provider unavailable"
+    if isinstance(exc, PricingResponseError):
+        return f"{exc.provider_id} pricing response was invalid"
+    return str(exc)
+
+
+def _raise_http_for_pricing_error(exc: PricingError) -> HTTPException:
+    detail = _pricing_error_detail(exc)
+    logger.warning(
+        "pricing failed provider=%s error_type=%s detail=%s",
+        exc.provider_id,
+        type(exc).__name__,
+        detail,
+    )
+    return HTTPException(status_code=_pricing_error_status(exc), detail=detail)
+
+
+def _pricing_error_event(exc: PricingError) -> dict[str, Any]:
+    return {
+        "type": "error",
+        "error_type": type(exc).__name__,
+        "provider": exc.provider_id,
+        "detail": _pricing_error_detail(exc),
+        "progress": 1.0,
+    }
 
 
 @router.get("/health")
@@ -146,43 +197,46 @@ def trip_search(payload: TripSearchRequest) -> TripSearchResponse:
         perf_counter() - stage_start,
     )
 
-    get_price = _select_price_provider(payload.pricing_provider)
-    logger.info(
-        "trip_search pricing provider=%s requested_provider=%s",
-        get_price.provider_id,
-        payload.pricing_provider,
-    )
-
-    stage_start = perf_counter()
-    result = search(
-        candidates=candidates,
-        origin=origin,
-        destination=destination,
-        get_price=get_price,
-        budget=payload.budget,
-        walk_penalty=payload.walk_penalty,
-        max_leaf_size=payload.max_leaf_size,
-    )
-    logger.info(
-        "trip_search search completed found=%s elapsed_s=%.2f",
-        result is not None,
-        perf_counter() - stage_start,
-    )
-
-    if result is None:
+    try:
+        get_price = _select_price_provider(payload.pricing_provider)
         logger.info(
-            "trip_search no candidates found total_elapsed_s=%.2f",
-            perf_counter() - request_start,
+            "trip_search pricing provider=%s requested_provider=%s",
+            get_price.provider_id,
+            payload.pricing_provider,
         )
-        raise HTTPException(status_code=404, detail="No pickup candidates found in search area")
 
-    stage_start = perf_counter()
-    original_price = get_price(origin, destination)
-    logger.info(
-        "trip_search original_price fetched price=%.2f elapsed_s=%.2f",
-        original_price,
-        perf_counter() - stage_start,
-    )
+        stage_start = perf_counter()
+        result = search(
+            candidates=candidates,
+            origin=origin,
+            destination=destination,
+            get_price=get_price,
+            budget=payload.budget,
+            walk_penalty=payload.walk_penalty,
+            max_leaf_size=payload.max_leaf_size,
+        )
+        logger.info(
+            "trip_search search completed found=%s elapsed_s=%.2f",
+            result is not None,
+            perf_counter() - stage_start,
+        )
+
+        if result is None:
+            logger.info(
+                "trip_search no candidates found total_elapsed_s=%.2f",
+                perf_counter() - request_start,
+            )
+            raise HTTPException(status_code=404, detail="No pickup candidates found in search area")
+
+        stage_start = perf_counter()
+        original_price = get_price(origin, destination)
+        logger.info(
+            "trip_search original_price fetched price=%.2f elapsed_s=%.2f",
+            original_price,
+            perf_counter() - stage_start,
+        )
+    except PricingError as exc:
+        raise _raise_http_for_pricing_error(exc) from exc
 
     logger.info(
         "trip_search result pickup=(%.6f, %.6f) price=%.2f original_price=%.2f "
@@ -326,6 +380,8 @@ def _trip_search_event_stream(payload: TripSearchRequest):
                 "total_elapsed_s": perf_counter() - request_start,
                 "progress": 1.0,
             })
+        except PricingError as exc:
+            emit(_pricing_error_event(exc))
         except Exception as exc:
             logger.exception("trip_search stream failed")
             emit({

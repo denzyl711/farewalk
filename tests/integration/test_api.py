@@ -6,6 +6,10 @@ from fastapi.testclient import TestClient
 
 from farewalk.models.geo import LatLng
 from farewalk.models.road import CandidatePoint, ScoredCandidate
+from farewalk.services.pricing import (
+    PricingConfigurationError,
+    PricingTimeoutError,
+)
 
 ORIGIN = {"origin_lat": 40.7128, "origin_lng": -74.0060}
 DESTINATION = {"destination_lat": 40.7580, "destination_lng": -73.9855}
@@ -28,6 +32,15 @@ class MockPriceProvider:
 
 
 MOCK_PRICE_PROVIDER = MockPriceProvider()
+
+
+class RaisingPriceProvider:
+    def __init__(self, provider_id: str = "uber", exc: Exception | None = None):
+        self.provider_id = provider_id
+        self.exc = exc or PricingTimeoutError("timed out", provider_id)
+
+    def __call__(self, pickup: LatLng, destination: LatLng) -> float:
+        raise self.exc
 
 
 @pytest.fixture(scope="module")
@@ -184,3 +197,60 @@ class TestTripSearchEndpoint:
     def test_missing_required_fields_returns_422(self, client):
         response = client.post("/search/trip", json={"origin_lat": 40.7128})
         assert response.status_code == 422
+
+    def test_pricing_provider_configuration_error_returns_503(self, client):
+        graph_p, cands_p, _pricing_p, search_p = self._mock_pipeline()
+        provider_patch = patch(
+            "farewalk.api.routes._select_price_provider",
+            side_effect=PricingConfigurationError("not configured", "uber"),
+        )
+        with graph_p, cands_p, search_p, provider_patch:
+            response = client.post(
+                "/search/trip",
+                json={**BASE_PAYLOAD, "pricing_provider": "uber"},
+            )
+        assert response.status_code == 503
+        assert response.json()["detail"] == "uber pricing is not configured"
+
+    def test_search_pricing_timeout_returns_504(self, client):
+        graph_p, cands_p, pricing_p, _search_p = self._mock_pipeline()
+        search_patch = patch(
+            "farewalk.api.routes.search",
+            side_effect=PricingTimeoutError("timed out", "uber"),
+        )
+        with graph_p, cands_p, pricing_p, search_patch:
+            response = client.post("/search/trip", json=BASE_PAYLOAD)
+        assert response.status_code == 504
+        assert response.json()["detail"] == "uber pricing request timed out"
+
+    def test_original_price_failure_returns_504(self, client):
+        graph_p, cands_p, _pricing_p, _search_p = self._mock_pipeline()
+        provider_patch = patch(
+            "farewalk.api.routes._select_price_provider",
+            return_value=RaisingPriceProvider("uber", PricingTimeoutError("timed out", "uber")),
+        )
+        search_patch = patch("farewalk.api.routes.search", return_value=MOCK_RESULT)
+        with graph_p, cands_p, provider_patch, search_patch:
+            response = client.post("/search/trip", json=BASE_PAYLOAD)
+        assert response.status_code == 504
+        assert response.json()["detail"] == "uber pricing request timed out"
+
+    def test_stream_pricing_error_emits_structured_error(self, client):
+        graph_p, cands_p, _pricing_p, search_p = self._mock_pipeline()
+        provider_patch = patch(
+            "farewalk.api.routes._select_price_provider",
+            side_effect=PricingConfigurationError("not configured", "uber"),
+        )
+        with graph_p, cands_p, provider_patch, search_p:
+            with client.stream(
+                "POST",
+                "/search/trip/stream",
+                json={**BASE_PAYLOAD, "pricing_provider": "uber"},
+            ) as response:
+                assert response.status_code == 200
+                events = [json.loads(line) for line in response.iter_lines() if line]
+
+        error_event = next(event for event in events if event["type"] == "error")
+        assert error_event["provider"] == "uber"
+        assert error_event["error_type"] == "PricingConfigurationError"
+        assert error_event["detail"] == "uber pricing is not configured"
