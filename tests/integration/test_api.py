@@ -198,6 +198,28 @@ class TestTripSearchEndpoint:
         response = client.post("/search/trip", json={"origin_lat": 40.7128})
         assert response.status_code == 422
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("radius_m", 0),
+            ("half_angle_deg", 180),
+            ("local_circle_radius_m", -1),
+            ("arc_steps", 1),
+            ("road_point_spacing_m", 0),
+            ("candidate_merge_radius_m", -1),
+            ("budget", 0),
+            ("walk_penalty", -0.1),
+            ("max_leaf_size", 0),
+            ("network_type", "plane"),
+            ("pricing_provider", "lyft"),
+            ("origin_lat", 91),
+            ("origin_lng", 181),
+        ],
+    )
+    def test_invalid_optional_params_return_422(self, client, field, value):
+        response = client.post("/search/trip", json={**BASE_PAYLOAD, field: value})
+        assert response.status_code == 422
+
     def test_pricing_provider_configuration_error_returns_503(self, client):
         graph_p, cands_p, _pricing_p, search_p = self._mock_pipeline()
         provider_patch = patch(

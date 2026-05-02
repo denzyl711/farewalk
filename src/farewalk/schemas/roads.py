@@ -1,16 +1,26 @@
 from pydantic import BaseModel
 
+from farewalk.schemas.search import (
+    ArcSteps,
+    HalfAngleDeg,
+    Latitude,
+    Longitude,
+    NetworkType,
+    NonNegativeFloat,
+    PositiveFloat,
+)
+
 
 class TripRoadGraphRequest(BaseModel):
-    origin_lat: float
-    origin_lng: float
-    destination_lat: float
-    destination_lng: float
-    radius_m: float | None = None
-    half_angle_deg: float | None = None
-    local_circle_radius_m: float | None = None
-    arc_steps: int | None = None
-    network_type: str | None = None
+    origin_lat: Latitude
+    origin_lng: Longitude
+    destination_lat: Latitude
+    destination_lng: Longitude
+    radius_m: PositiveFloat | None = None
+    half_angle_deg: HalfAngleDeg | None = None
+    local_circle_radius_m: NonNegativeFloat | None = None
+    arc_steps: ArcSteps | None = None
+    network_type: NetworkType | None = None
 
 
 class TripRoadGraphResponse(BaseModel):
